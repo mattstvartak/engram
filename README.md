@@ -171,6 +171,7 @@ If your tool can connect to an MCP server over stdio, Engram will work with it.
 ```
 /plugin marketplace add mattstvartak/onenomad-plugins
 /plugin install engram@onenomad-plugins
+/reload-plugins
 ```
 
 ### Claude Code (direct)
