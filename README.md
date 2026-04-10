@@ -4,6 +4,22 @@ A memory system for AI agents that actually works. LLMs can't remember anything 
 
 The core idea is that memory shouldn't just be "find similar text." When someone asks "where was I working last March?" the system needs to actually reason about time, not just pattern match on the word "March." So the search pipeline combines vector similarity, keyword matching with IDF weighting, temporal inference, a knowledge graph, and spreading activation over a memory graph. Each piece handles a different kind of recall that the others miss.
 
+## Table of Contents
+
+- [Benchmark Results](#benchmark-results)
+- [How It Works](#how-it-works)
+- [Compatibility](#compatibility)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Tools](#tools)
+- [Slash Commands](#slash-commands)
+- [Architecture](#architecture)
+- [Running the Benchmarks](#running-the-benchmarks)
+- [Security](#security)
+- [Use Cases](#use-cases)
+- [Pairs Well With: Persona MCP](#pairs-well-with-persona-mcp)
+- [License](#license)
+
 ## Benchmark Results
 
 Tested against the [LoCoMo benchmark](https://github.com/snap-research/locomo) (1,986 QA pairs across 10 long conversations). No LLM reranking, just the retrieval pipeline on its own.
