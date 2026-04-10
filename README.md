@@ -296,6 +296,20 @@ These work in any MCP-compatible client (Claude Code, Cursor, etc.). The MCP ser
 | `/knowledge <subcommand>` | Knowledge graph operations. Subcommands: `timeline <entity>`, `about <entity>`, `add <s> <p> <o>`, `correct <s> <p>`, `stats`. |
 | `/memory <subcommand>` | Quick ops. Subcommands: `save <content>`, `diary [date]`, `diary write <entry>`, `import <source>`, `rules`, `session [show\|clear]`. |
 
+### Installing Slash Commands for Claude Code
+
+The slash commands above are advertised in Engram's MCP server instructions and work automatically in most clients. For Claude Code specifically, you can also install them as custom commands so they show up in the `/` command menu:
+
+```bash
+# From the engram directory
+bash install-commands.sh
+
+# To overwrite existing commands
+bash install-commands.sh --force
+```
+
+This copies command files to `~/.claude/commands/` where Claude Code picks them up globally. After installing, type `/` in Claude Code to see them in the command list.
+
 ## Architecture
 
 ```
