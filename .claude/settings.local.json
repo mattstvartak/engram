@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_context7-plugin_context7__resolve-library-id",
+      "mcp__plugin_context7-plugin_context7__query-docs",
+      "Bash(timeout 5 node dist/server.js)",
+      "Bash(ls \"C:\\\\Users\\\\matts\\\\development\\\\openclaw\\\\openclaw-smart-memory-plugin\\\\dist\"/*.js)",
+      "Bash(wc -l /tmp/mempalace/tests/*.py)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(nvidia-smi:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(npm ls:*)",
+      "Bash(npm view:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(timeout 10 node dist/server.js)",
+      "Bash(node -e ':*)",
+      "mcp__smart-memory__memory_search",
+      "mcp__smart-memory__memory_ingest",
+      "mcp__smart-memory__memory_kg_add",
+      "Bash(node -e \" const fs = require\\('fs'\\); const input = fs.readFileSync\\('/dev/stdin', 'utf8'\\); const settings = JSON.parse\\(input\\); const smartMemoryTools = [ 'mcp__smart-memory__memory_ingest', 'mcp__smart-memory__memory_search', 'mcp__smart-memory__memory_format', 'mcp__smart-memory__memory_kg_add', 'mcp__smart-memory__memory_kg_query', 'mcp__smart-memory__memory_kg_timeline', 'mcp__smart-memory__memory_kg_stats', 'mcp__smart-memory__memory_kg_invalidate', 'mcp__smart-memory__memory_diary_write', 'mcp__smart-memory__memory_diary_read', 'mcp__smart-memory__memory_rules', 'mcp__smart-memory__memory_extract', 'mcp__smart-memory__memory_extract_rules', 'mcp__smart-memory__memory_check_duplicate', 'mcp__smart-memory__memory_maintain', 'mcp__smart-memory__memory_stats', 'mcp__smart-memory__memory_session', 'mcp__smart-memory__memory_outcome', 'mcp__smart-memory__memory_taxonomy', 'mcp__smart-memory__memory_import', 'mcp__smart-memory__memory_mem0_sync' ]; for \\(const tool of smartMemoryTools\\) { if \\(!settings.permissions.allow.includes\\(tool\\)\\) { settings.permissions.allow.push\\(tool\\); } } console.log\\(JSON.stringify\\(settings, null, 2\\)\\); \")",
+      "Bash(mv ~/.claude/settings.json.tmp ~/.claude/settings.json)",
+      "mcp__persona__persona_profile",
+      "mcp__persona__persona_read",
+      "mcp__persona__persona_stats",
+      "Bash(npx tsc:*)",
+      "Bash(node:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "gemini-cli"
+  ]
+}

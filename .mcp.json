@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "smart-memory": {
+      "command": "node",
+      "args": ["C:\\Users\\matts\\development\\openclaw\\openclaw-smart-memory-plugin\\dist\\server.js"],
+      "env": {
+        "SMART_MEMORY_DEVICE": "dml"
+      }
+    },
+    "persona": {
+      "command": "node",
+      "args": ["C:\\Users\\matts\\development\\openclaw\\openclaw-persona-plugin\\dist\\server.js"]
+    }
+  }
+}

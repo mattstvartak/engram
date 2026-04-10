@@ -1,0 +1,394 @@
+# Engram
+
+A memory system for AI agents that actually works. LLMs can't remember anything between conversations by default, and the existing solutions are either too simple (just dump everything in a vector DB) or too expensive (send your entire history to an API every time). Engram sits in the middle. It runs locally, doesn't need an API key for basic operation, and scores 93.2% recall on the LoCoMo benchmark. That beats every open-source memory system I've tested against.
+
+The core idea is that memory shouldn't just be "find similar text." When someone asks "where was I working last March?" the system needs to actually reason about time, not just pattern match on the word "March." So the search pipeline combines vector similarity, keyword matching with IDF weighting, temporal inference, a knowledge graph, and spreading activation over a memory graph. Each piece handles a different kind of recall that the others miss.
+
+## Benchmark Results
+
+Tested against the [LoCoMo benchmark](https://github.com/snap-research/locomo) (1,986 QA pairs across 10 long conversations). No LLM reranking, just the retrieval pipeline on its own.
+
+```
+Per-category:
+  adversarial               R@5= 89.7%  R@10= 94.6%
+  open-domain               R@5= 90.2%  R@10= 95.2%
+  single-hop                R@5= 79.8%  R@10= 92.2%
+  temporal                  R@5= 84.1%  R@10= 92.2%
+  temporal-inference         R@5= 66.7%  R@10= 74.0%
+
+  OVERALL                   R@5=86.5%   R@10=93.2%
+  Embedding model           Xenova/all-MiniLM-L6-v2 (23MB, runs on CPU)
+```
+
+For reference, here's how that stacks up against other memory systems on LoCoMo:
+
+| System | Score | Metric | Requires API | Notes |
+|--------|-------|--------|-------------|-------|
+| **Engram** | **93.2%** | **R@10** | **No** | **Local embeddings, no rerank** |
+| MemMachine v0.2 | 91.7% | LLM-judge | Yes | GPT-4.1-mini for extraction + judge |
+| Backboard | 90.1% | LLM-judge | Yes | GPT-4.1 judge |
+| MemPalace hybrid v5 | 88.9% | R@10 | No | Most direct comparison, same metric |
+| Zep Graphiti | 85.2% | LLM-judge | Yes | Graph-based retrieval |
+| Supermemory | 83.5% | R@10 | No | |
+| Letta | ~83.2% | LLM-judge | Yes | |
+| Zep (standard) | 75.1% | LLM-judge | Yes | |
+| Mem0 | 64-67% | LLM-judge | Yes | Cloud API |
+| OpenAI memory | 52.9% | LLM-judge | Yes | Built-in ChatGPT memory |
+
+A couple things worth noting about this table. Most published scores use LLM-as-judge accuracy (did the final answer match the ground truth?), which is a different metric than R@10 retrieval recall (is the right memory in the top 10 candidates?). So not every row is a direct apples-to-apples comparison. The closest one is MemPalace at 88.9% R@10 using the same methodology and dataset.
+
+The other thing that stands out is the API column. Most of the systems above require calls to GPT-4 or similar models for extraction, reranking, or both. Engram hits 93.2% using a 23MB local embedding model on CPU with zero API calls during retrieval. Adding LLM reranking on top of that should push the score higher.
+
+## How It Works
+
+### The Search Pipeline
+
+This is where the interesting stuff happens. A query goes through seven stages before results come back.
+
+**Stage 1: Signal Extraction.** Before any search happens, the query gets parsed for dates, entities (proper nouns), quoted phrases, and temporal language. If someone writes "What was Matt working on before he switched jobs in June?" the system extracts the date (June), the entity (Matt), and flags it as a temporal inference query because of the word "before."
+
+**Stage 2: Vector Search.** Standard ANN search against LanceDB using cosine distance on 384-dim embeddings. This handles the "find semantically similar stuff" part. Candidates need at least 0.25 similarity to make the cut.
+
+**Stage 3: IDF Keyword Scoring.** Rare terms in the query get weighted higher than common words. If you search for "Matt TypeScript" both terms will dominate scoring because they appear in relatively few memories. Proper nouns get an extra 1.5x boost. Results from this stage get blended with vector scores. The blend shifts toward keywords when entities are present, since names and specific nouns are better matched by exact text than by embedding similarity.
+
+**Stage 4: Bonus Factors.** Every candidate gets adjustments for recency, recall frequency, tier, importance, and cognitive layer. Procedural memories (rules about how you want things done) get a small boost because they tend to be more immediately useful.
+
+**Stage 5: Temporal Boost.** If the query mentions dates, memories get boosted based on whether they contain matching date strings or were created near the query date. Exact date matches in content get up to +0.4, timestamp proximity up to +0.3.
+
+**Stage 6: Time-Window Retrieval.** This is the big one for temporal inference. When the system detects temporal signals, it pulls memories from the relevant time period into the candidate pool regardless of semantic similarity. "Where was I working in March 2024?" needs memories *from* March 2024, not just memories that happen to mention the word "March." Window size adapts to date precision. A specific day gets +/- 3 days, a month gets the full month plus buffer, a year gets the full year. If the query says "before March," the window extends 90 days earlier.
+
+**Stage 7: Knowledge Graph Lookup.** When entities and time are both present, the system queries the knowledge graph for facts that were valid at the query time. If there's a triple like `(Matt, works-at, Acme Corp, valid 2024-01 to 2024-06)` and the query asks about Matt in March 2024, memories mentioning "Acme Corp" get boosted.
+
+**Stage 8: Spreading Activation.** Based on [Collins & Loftus (1975)](https://en.wikipedia.org/wiki/Spreading_activation). The top 5 scoring memories activate their graph neighbors, which in turn activate their neighbors. Two hops deep, with activation decaying at each hop. Temporal edges get a 1.5x multiplier when the query involves time reasoning.
+
+**Stage 9: Token Budget.** Results get sorted by score and trimmed to fit within a configurable token budget (default 1500 tokens). This prevents context bloat when injecting memories into prompts.
+
+### Memory Tiers
+
+Memories flow through four tiers with automatic promotion and demotion:
+
+```
+daily (2 days) --> short-term (14 days) --> long-term (90 days) --> archive
+                        ^                                             |
+                        +------ reactivation (if recalled) -----------+
+```
+
+Promotion isn't just about age. A memory moves to long-term if it's been recalled multiple times, has high importance, received "helpful" feedback, or is a procedural rule. Memories that keep getting recalled stay promoted. Memories that never get touched decay and eventually archive.
+
+Importance decays exponentially over time, but the rates differ by cognitive layer:
+- **Procedural** (rules): decays slowest (0.98/week, floor 0.15). Rules tend to stay relevant.
+- **Semantic** (facts): medium decay (0.97/week, floor 0.10)
+- **Episodic** (events): decays fastest (0.95/week, floor 0.05). Specific moments matter less over time.
+
+### Cognitive Layers
+
+Every memory gets classified into one of three layers:
+
+- **Episodic** is for events tied to a specific moment. "User debugged a schema migration and it took most of the session."
+- **Semantic** is for durable facts. "User prefers TypeScript over Python." "User's dog is named Ellie."
+- **Procedural** is for behavioral rules about how the user wants things done. "Always show code before explanation." "Never use em-dashes."
+
+The system can extract these from conversations using LLM-powered classification or, if no API key is available, a set of heuristic patterns. The heuristics catch things like "I always prefer X" (procedural), "I work at Y" (semantic fact), and "no, don't do that" (correction/procedural).
+
+### Procedural Rules
+
+Learned from user corrections and direct instructions. Each rule has a confidence score that shifts with evidence:
+
+- Reinforcement (user repeats or confirms the rule): confidence +0.1
+- Contradiction (user does the opposite): confidence -0.2
+
+The asymmetry is intentional. Contradictions should weigh more because they often mean the rule was wrong. Rules that hit zero confidence get pruned.
+
+### Knowledge Graph
+
+Entity-relationship triples with temporal validity. Each triple records when a fact became true and optionally when it stopped being true.
+
+```
+("Matt", "works-at", "Acme Corp",  validFrom: 2024-01, validTo: 2024-06)
+("Matt", "works-at", "NewCo",      validFrom: 2024-06, validTo: null)
+("finch-core", "uses", "TypeScript", validFrom: 2025-01, validTo: null)
+```
+
+When a fact changes, the old triple gets invalidated (marked with an end date) and a new one gets created. The full history is preserved so the system can answer questions about the past. Adding a triple that already exists just bumps its confidence score.
+
+### Reconsolidation
+
+Borrowed from neuroscience. When a memory gets recalled during a relevant conversation and marked as helpful, the system can update it with new context. A memory like "User prefers TypeScript" might get refined to "User prefers TypeScript for large projects but uses Python for quick scripts" if that nuance comes up in conversation.
+
+This only triggers if the memory hasn't been reconsolidated in the last 24 hours (to prevent over-updating) and requires an LLM API key.
+
+### Recall Outcomes
+
+A feedback loop that lets the system learn which memories are actually useful:
+
+- **Helpful**: importance +0.05, triggers reconsolidation, strengthens graph edges to co-recalled memories
+- **Corrected**: importance -0.10 (memory was wrong)
+- **Irrelevant**: importance -0.05
+
+If a memory gets marked irrelevant 3+ times out of the last 5 recalls, its importance drops sharply and it may get archived.
+
+### Duplicate Detection and Merging
+
+New memories get checked against existing ones using Jaccard similarity on word sets (threshold 0.75). If a duplicate is found, it doesn't get stored.
+
+During consolidation, the system also scans for near-duplicates using cosine similarity on embeddings (threshold 0.9). When found, the higher-importance memory absorbs the other's recall count and the duplicate gets deleted.
+
+## Compatibility
+
+Engram is an MCP (Model Context Protocol) server. It works with any client that supports the MCP standard. That includes:
+
+- **Claude Code** (Anthropic's CLI and desktop app)
+- **Claude.ai** (via MCP server configuration)
+- **Cursor** (AI code editor)
+- **Windsurf** (AI code editor)
+- **Cline** (VS Code extension)
+- **Continue** (VS Code / JetBrains extension)
+- **OpenClaw** (AI agent platform, also supports the plugin API)
+- **Any MCP-compatible client** (the protocol is open and standardized)
+
+If your tool can connect to an MCP server over stdio, Engram will work with it.
+
+## Installation
+
+### As an MCP Server
+
+Add to your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "node",
+      "args": ["/path/to/engram/dist/server.js"]
+    }
+  }
+}
+```
+
+### From Source
+
+```bash
+git clone https://github.com/mattstvartak/engram.git
+cd engram
+npm install
+npm run build
+```
+
+### As an OpenClaw Plugin
+
+```bash
+openclaw plugins install engram
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | (none) | Enables LLM extraction and reranking. Without it, the system uses heuristic extraction and keyword/vector search only. |
+| `MEM0_API_KEY` | (none) | Enables Mem0 cloud extraction as a second opinion |
+| `SMART_MEMORY_DATA_DIR` | `~/.claude/smart-memory` | Where data gets stored |
+| `SMART_MEMORY_EMBEDDING_MODEL` | `Xenova/all-MiniLM-L6-v2` | HuggingFace model for embeddings |
+| `SMART_MEMORY_DEVICE` | `cpu` | Embedding device: `cpu`, `dml` (DirectML), or `cuda` |
+| `SMART_MEMORY_MODEL` | `claude-haiku-4-5-20251001` | Claude model for LLM features |
+
+### Plugin Config (OpenClaw)
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-smart-memory-plugin": {
+        "enabled": true,
+        "config": {
+          "extractionProvider": "local",
+          "maxRecallChunks": 10,
+          "maxRecallTokens": 1500
+        }
+      }
+    }
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `extractionProvider` | `local` | `local`, `mem0`, or `both` |
+| `maxRecallChunks` | `10` | Max memories per search |
+| `maxRecallTokens` | `1500` | Token budget for recalled memories |
+| `extractionThreshold` | `3` | Min messages before auto-extraction kicks in |
+
+## Tools
+
+The MCP server exposes 19 tools organized into four groups.
+
+### Core Memory
+
+| Tool | What it does |
+|------|-------------|
+| `memory_search` | Hybrid ANN + keyword search with spreading activation |
+| `memory_format` | Search and format memories for prompt injection |
+| `memory_ingest` | Write-ahead log: immediately persist a memory before responding |
+| `memory_extract` | Extract memories from a conversation (LLM or heuristic) |
+| `memory_check_duplicate` | Check if a memory already exists before ingesting |
+| `memory_maintain` | Run consolidation (decay, promote, link, merge) |
+| `memory_rules` | Show active procedural rules |
+| `memory_outcome` | Record recall feedback (helpful/corrected/irrelevant) |
+| `memory_session` | Manage session state (hot RAM scratchpad) |
+| `memory_stats` | Memory statistics by tier, layer, type |
+| `memory_taxonomy` | Domain/topic hierarchy with counts |
+
+### Knowledge Graph
+
+| Tool | What it does |
+|------|-------------|
+| `memory_kg_add` | Add a subject-predicate-object triple |
+| `memory_kg_query` | Query triples with optional filters |
+| `memory_kg_invalidate` | Mark a fact as no longer valid |
+| `memory_kg_timeline` | Get chronological history of an entity |
+| `memory_kg_stats` | Knowledge graph statistics |
+
+### Diary
+
+| Tool | What it does |
+|------|-------------|
+| `memory_diary_write` | Write a session diary entry |
+| `memory_diary_read` | Read diary entries by date or range |
+
+### Import & Extraction
+
+| Tool | What it does |
+|------|-------------|
+| `memory_import` | Bulk import from Claude Code JSONL, ChatGPT JSON, or plain text |
+| `memory_extract_rules` | Analyze a conversation for procedural rules |
+| `memory_mem0_sync` | Sync Mem0 cloud memories to local store |
+
+## Architecture
+
+```
+Conversations --> Extract --> LanceDB (vectors + metadata)
+                                  |
+                    +-------------+-------------+
+                    |             |             |
+               Vector ANN   IDF Keywords   Time Windows
+                    |             |             |
+                    +------+------+------+------+
+                           |             |
+                      KG Temporal    Spreading
+                        Lookup      Activation
+                           |             |
+                           +------+------+
+                                  |
+                           Score + Rank
+                                  |
+                         Token Budget Cap
+                                  |
+                       Format for Prompt
+```
+
+### Data Storage
+
+Everything lives locally:
+
+```
+~/.claude/smart-memory/
+├── SESSION-STATE.md      # Hot RAM scratchpad
+├── diary/                # Daily diary entries
+│   └── YYYY-MM-DD.md
+└── lance/                # LanceDB tables
+    ├── chunks.lance/     # Memory chunks with embeddings
+    ├── daily_logs.lance/ # Extraction logs
+    ├── rules.lance/      # Procedural rules
+    └── knowledge_triples.lance/
+```
+
+### Dependencies
+
+- **LanceDB** for the embedded vector database, handles ANN search natively
+- **@huggingface/transformers** for local embedding inference (Xenova/all-MiniLM-L6-v2, 384 dimensions, 23MB)
+- **@anthropic-ai/sdk** (optional) for LLM-powered extraction and reranking
+- **mem0ai** (optional) for Mem0 cloud extraction
+- **@modelcontextprotocol/sdk** for the MCP server protocol
+
+## Running the Benchmarks
+
+```bash
+# Clone the LoCoMo dataset
+git clone https://github.com/snap-research/locomo.git benchmarks/data/locomo
+
+# Run the full benchmark (1,986 QA pairs, takes a few minutes)
+npm run bench:locomo
+
+# Quick test with a subset
+npm run bench:locomo -- --limit 200
+
+# With LLM reranking (requires ANTHROPIC_API_KEY)
+npm run bench:locomo -- --rerank
+
+# Verbose output (shows individual misses)
+npm run bench:locomo -- --verbose
+```
+
+## Security
+
+### Network calls
+
+This plugin contacts exactly two services:
+
+1. **HuggingFace Hub** for a one-time model download on first run (~23MB), cached after that
+2. **Mem0 API**, only when `extractionProvider` is `mem0` or `both`
+
+If you set `ANTHROPIC_API_KEY`, it also contacts the Anthropic API for LLM features. Without any API keys, everything runs fully local.
+
+No telemetry. No analytics. No phoning home.
+
+### Local storage
+
+All memory data stays on disk at `~/.claude/smart-memory/`. Nothing gets sent anywhere unless you explicitly configure an external provider.
+
+## Use Cases
+
+Here are some real situations where this makes a difference.
+
+**Personal AI assistant.** The most obvious one. You talk to an AI every day and it forgets everything between sessions. Engram fixes that. It learns your preferences, remembers your projects, picks up your corrections, and builds a picture of who you are over time. Instead of re-explaining yourself every conversation, the agent just knows.
+
+**Developer tools.** If you use Claude Code, Cursor, or any AI coding tool, the agent forgets your codebase conventions, your preferred patterns, and the decisions you've already made. Engram picks up things like "always use explicit return types" or "we deploy to Vercel, not AWS" and carries them forward. Procedural rules are built for this.
+
+**Customer support agents.** A support bot that actually remembers a customer's history, past issues, and preferences without needing to query a CRM every time. The knowledge graph handles entity relationships ("Customer X uses Plan Y, started in March") and temporal queries let the agent reason about timelines.
+
+**Research and note-taking.** If you use an AI to research topics over multiple sessions, Engram lets it build on previous findings instead of starting from scratch. The diary system logs what happened each session, and the search pipeline surfaces relevant prior research when you come back to a topic.
+
+**Multi-agent systems.** Multiple agents can share the same memory store. One agent handles research, another handles coding, and they both read from and write to the same LanceDB. The MCP protocol makes this straightforward since any MCP-compatible client can connect to the server.
+
+**Therapy / coaching bots.** Sensitive use case, but a good one. An AI that remembers what you talked about last week, tracks your goals, and notices patterns in your behavior over time. The tier lifecycle naturally keeps recent context hot while letting older sessions fade unless they stay relevant.
+
+## Pairs Well With: Persona MCP
+
+If Engram is the brain, [Persona](https://github.com/mattstvartak/persona) is the personality.
+
+Engram handles *what* the agent remembers: facts, preferences, rules, timelines. Persona handles *how* the agent communicates: tone, verbosity, format preferences, and communication style. They solve different problems but work best together.
+
+Here's why the combo matters. Engram will learn that you prefer TypeScript over Python. Persona will learn that you want short answers with code first and explanation after. Engram will store the fact that you got laid off last month. Persona will know not to bring that up casually based on the emotional context it picked up.
+
+Persona tracks behavioral signals (corrections, approvals, frustrations, praise) and builds a communication profile that adapts over time. Engram's procedural rules overlap a little here ("never use em-dashes"), but Persona goes deeper into *how* the agent should talk to you specifically. Things like matching your energy level, knowing when to be terse vs. when to elaborate, and adjusting formality based on the topic.
+
+When both servers are running, Engram's system prompt instructions tell the agent to proactively record persona signals as it observes them. The agent calls `persona_signal` when it notices corrections, approvals, or style preferences, and calls `persona_context` at the start of complex interactions to calibrate its responses. No extra configuration needed. They just find each other through the MCP protocol.
+
+You can run Engram without Persona and it works fine. But if you want an AI that actually feels like it knows you, not just what you've told it, but how you like to be talked to, run both.
+
+## License
+
+Licensed under the [Business Source License 1.1](LICENSE).
+
+- **Licensor:** Matt Stvartak / OneNomad LLC
+- **Licensed Work:** Engram (Smart Memory MCP), Copyright (c) 2026 Matt Stvartak / OneNomad LLC
+- **Additional Use Grant:** You may use the Licensed Work for personal, educational, and non-commercial purposes. Production use in a commercial product or service requires a separate commercial license.
+- **Change Date:** April 10, 2030
+- **Change License:** Apache License, Version 2.0
+
+Use it, fork it, learn from it, run it for yourself. You can't sell it, bundle it with paid software, host it as a service for profit, or rebrand it. On the change date it converts to Apache 2.0 and those restrictions go away.
+
+Want to use Engram commercially before then? Reach out. I'm not trying to lock things down, I just want to know where it ends up.
+
+For licensing inquiries: **matt@onenomad.dev**

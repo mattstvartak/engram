@@ -1,0 +1,702 @@
+import type { SmartMemoryConfig, SearchResult } from './types.js';
+import type { StoredChunk } from './storage.js';
+import { Storage } from './storage.js';
+import { embed, llmComplete } from './llm.js';
+import { cosineSimilarity, estimateTokens } from './utils.js';
+
+/**
+ * Hybrid memory search: native ANN vector search (LanceDB) + keyword
+ * with IDF weighting + temporal/entity/phrase boosting + spreading activation.
+ */
+export async function search(
+  config: SmartMemoryConfig,
+  storage: Storage,
+  query: string,
+  maxResults?: number,
+  filters?: { domain?: string; topic?: string }
+): Promise<SearchResult[]> {
+  const limit = maxResults ?? config.maxRecallChunks;
+  const allChunks = await storage.listChunks({
+    excludeTiers: ['archive'],
+    domain: filters?.domain,
+    topic: filters?.topic,
+  });
+  if (allChunks.length === 0) return [];
+
+  const scored = new Map<string, { chunk: StoredChunk; score: number }>();
+
+  // Pre-extract query signals for boosting
+  const querySignals = extractQuerySignals(query);
+  const hasEntities = querySignals.entities.length > 0;
+
+  // Build IDF weights for keyword scoring
+  const idfWeights = buildIdfWeights(query, allChunks);
+
+  // ── Native ANN vector search via LanceDB ───────────────────────────
+  let queryEmbedding: number[] | null = null;
+  try {
+    queryEmbedding = await embed(config, query);
+  } catch {
+    // Fall back to keyword-only
+  }
+
+  if (queryEmbedding && queryEmbedding.length > 0) {
+    const vectorResults = await storage.vectorSearch(
+      queryEmbedding,
+      Math.min(limit * 5, 50), // Larger candidate pool
+      "tier != 'archive'"
+    );
+
+    for (const { chunk, distance } of vectorResults) {
+      const similarity = 1 - distance;
+      if (similarity > 0.25) {
+        scored.set(chunk.id, { chunk, score: similarity });
+      }
+    }
+  }
+
+  // ── IDF-weighted keyword scoring ──────────────────────────────────
+  // Rare terms (names, specific nouns) score much higher than common words.
+  const queryTerms = Object.keys(idfWeights);
+  if (queryTerms.length > 0) {
+    const totalIdfWeight = Object.values(idfWeights).reduce((a, b) => a + b, 0);
+
+    for (const chunk of allChunks) {
+      const text = `${chunk.content} ${chunk.tags.join(' ')}`.toLowerCase();
+      let weightedMatches = 0;
+
+      for (const term of queryTerms) {
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`\\b${escaped}\\b`).test(text)) {
+          weightedMatches += idfWeights[term];
+        }
+      }
+
+      if (weightedMatches > 0) {
+        const keywordScore = weightedMatches / totalIdfWeight;
+        const existing = scored.get(chunk.id);
+
+        // Adaptive blend: when query has entities, trust keywords more
+        if (existing) {
+          if (hasEntities) {
+            existing.score = existing.score * 0.5 + keywordScore * 0.5;
+          } else {
+            existing.score = existing.score * 0.65 + keywordScore * 0.35;
+          }
+        } else {
+          // Keyword-only matches need to compete with vector results
+          scored.set(chunk.id, { chunk, score: keywordScore * 0.8 });
+        }
+      }
+    }
+  }
+
+  // ── Bonus factors ──────────────────────────────────────────────────
+  const now = Date.now();
+  for (const [, entry] of scored) {
+    const c = entry.chunk;
+    const ageDays = (now - new Date(c.createdAt).getTime()) / 86_400_000;
+
+    // Base bonuses
+    entry.score += Math.max(0, 0.1 * (1 - ageDays / 30));        // Recency
+    entry.score += Math.min(0.05, c.recallCount * 0.01);          // Frequency
+    entry.score += c.tier === 'long-term' ? 0.05 : 0;            // Tier bonus
+    entry.score += c.importance * 0.1;                             // Importance (0-0.1)
+    if (c.cognitiveLayer === 'procedural') entry.score += 0.05;   // Procedural boost
+
+    // ── Temporal proximity boost (up to +0.4) ────────────────────
+    if (querySignals.dates.length > 0) {
+      entry.score += temporalBoost(c, querySignals.dates);
+    }
+
+    // ── Entity / proper noun boost (up to +0.5) ─────────────────
+    if (querySignals.entities.length > 0) {
+      entry.score += entityBoost(c, querySignals.entities);
+    }
+
+    // ── Quoted phrase boost (up to +0.6) ─────────────────────────
+    if (querySignals.phrases.length > 0) {
+      entry.score += phraseBoost(c, querySignals.phrases);
+    }
+  }
+
+  // ── Time-window retrieval (temporal inference) ─────────────────────
+  // When dates are detected, pull in memories from that time period even
+  // if they didn't match semantically. This is the biggest lever for
+  // temporal inference: "Where was I working in March 2024?" needs
+  // memories *from* that period, not just memories *mentioning* March.
+  if (querySignals.dates.length > 0 || querySignals.isTemporalInference) {
+    const windows = buildTimeWindows(querySignals);
+
+    for (const chunk of allChunks) {
+      if (scored.has(chunk.id)) continue; // Already in candidates
+      const chunkTime = new Date(chunk.createdAt).getTime();
+
+      for (const win of windows) {
+        if (chunkTime >= win.start && chunkTime <= win.end) {
+          // Base score proportional to how close to center of window
+          const center = (win.start + win.end) / 2;
+          const halfSpan = (win.end - win.start) / 2;
+          const proximity = 1 - Math.abs(chunkTime - center) / halfSpan;
+          const windowScore = 0.3 + proximity * 0.2; // 0.3 - 0.5
+
+          scored.set(chunk.id, { chunk, score: windowScore });
+          break;
+        }
+      }
+    }
+  }
+
+  // ── Knowledge graph temporal lookup ───────────────────────────────
+  // When entities + time are present, query KG for facts valid at that
+  // time and boost memories that reference the same subjects/objects.
+  if (querySignals.isTemporalInference && querySignals.entities.length > 0) {
+    try {
+      const kgBoostTerms = new Set<string>();
+
+      for (const entity of querySignals.entities) {
+        const timeline = await storage.getTripleTimeline(entity);
+
+        for (const triple of timeline) {
+          const validFrom = new Date(triple.validFrom).getTime();
+          const validTo = triple.validTo ? new Date(triple.validTo).getTime() : now;
+
+          // Check if this triple was valid during any of the query dates
+          let tripleRelevant = false;
+
+          if (querySignals.dates.length > 0) {
+            for (const qd of querySignals.dates) {
+              const queryTime = new Date(
+                qd.year ?? new Date().getFullYear(),
+                (qd.month ?? 1) - 1,
+                qd.day ?? 15
+              ).getTime();
+
+              if (queryTime >= validFrom && queryTime <= validTo) {
+                tripleRelevant = true;
+                break;
+              }
+            }
+          } else {
+            // No specific date -- use active triples
+            tripleRelevant = !triple.validTo;
+          }
+
+          if (tripleRelevant) {
+            // Add the triple's subject, predicate, and object as boost terms
+            kgBoostTerms.add(triple.subject.toLowerCase());
+            kgBoostTerms.add(triple.object.toLowerCase());
+          }
+        }
+      }
+
+      // Boost existing candidates that mention KG-derived terms
+      if (kgBoostTerms.size > 0) {
+        for (const [, entry] of scored) {
+          const contentLower = entry.chunk.content.toLowerCase();
+          let kgMatches = 0;
+          for (const term of kgBoostTerms) {
+            if (contentLower.includes(term)) kgMatches++;
+          }
+          if (kgMatches > 0) {
+            entry.score += Math.min(0.3, kgMatches * 0.1);
+          }
+        }
+      }
+    } catch {
+      // KG lookup is best-effort
+    }
+  }
+
+  // ── Spreading activation (graph walk) ──────────────────────────────
+  const isTemporalQuery = querySignals.isTemporalInference || querySignals.dates.length > 0;
+
+  const seeds = Array.from(scored.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  const MAX_EDGES = 5;
+  for (const parent of seeds) {
+    const edges = parent.chunk.relatedMemories.slice(0, MAX_EDGES);
+    for (const edge of edges) {
+      // Prioritize temporal edges when query is temporal
+      const edgeMultiplier = isTemporalQuery && edge.relationship === 'temporal' ? 1.5 : 1.0;
+      const hop1Activation = parent.score * edge.weight * edgeMultiplier * 0.5;
+      const existing = scored.get(edge.targetId);
+
+      if (existing) {
+        existing.score += parent.score * edge.weight * edgeMultiplier * 0.2;
+      } else {
+        const hop1Chunk = await storage.getChunk(edge.targetId);
+        if (hop1Chunk && hop1Chunk.tier !== 'archive') {
+          scored.set(edge.targetId, { chunk: hop1Chunk, score: hop1Activation });
+
+          for (const hop2Edge of hop1Chunk.relatedMemories.slice(0, MAX_EDGES)) {
+            if (scored.has(hop2Edge.targetId)) continue;
+            const hop2Multiplier = isTemporalQuery && hop2Edge.relationship === 'temporal' ? 1.5 : 1.0;
+            const hop2Activation = parent.score * edge.weight * hop2Edge.weight * edgeMultiplier * hop2Multiplier * 0.25;
+            const hop2Chunk = await storage.getChunk(hop2Edge.targetId);
+            if (hop2Chunk && hop2Chunk.tier !== 'archive') {
+              scored.set(hop2Edge.targetId, { chunk: hop2Chunk, score: hop2Activation });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ── Sort and apply token budget ────────────────────────────────────
+  const sorted = Array.from(scored.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 20);
+
+  const results: SearchResult[] = [];
+  let tokensUsed = 0;
+
+  for (const entry of sorted) {
+    const tokens = estimateTokens(entry.chunk.content) + 10;
+    if (tokensUsed + tokens > config.maxRecallTokens) break;
+    if (results.length >= limit) break;
+    results.push({ chunk: entry.chunk, score: entry.score });
+    tokensUsed += tokens;
+
+    await storage.updateChunk(entry.chunk.id, {
+      recallCount: entry.chunk.recallCount + 1,
+      lastRecalledAt: new Date().toISOString(),
+    });
+  }
+
+  return results;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// IDF-WEIGHTED KEYWORD SCORING
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Build IDF-like weights for query terms.
+ * Terms that appear in fewer documents get higher weight.
+ * Proper nouns (capitalized) get an additional boost.
+ */
+function buildIdfWeights(
+  query: string,
+  corpus: StoredChunk[]
+): Record<string, number> {
+  const STOP = new Set([
+    'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'can', 'what', 'when', 'where', 'which',
+    'who', 'whom', 'how', 'why', 'that', 'this', 'these', 'those',
+    'i', 'you', 'he', 'she', 'it', 'we', 'they', 'my', 'your', 'his',
+    'her', 'its', 'our', 'their', 'if', 'for', 'from', 'with', 'about',
+    'into', 'and', 'but', 'or', 'not', 'no', 'so', 'too', 'very', 'just',
+    'also', 'than', 'both', 'any', 'all',
+  ]);
+
+  const rawTerms = query.split(/\s+/).map(t => t.replace(/[^a-zA-Z0-9'-]/g, '')).filter(t => t.length > 1);
+  const terms = rawTerms.filter(t => !STOP.has(t.toLowerCase()));
+  if (terms.length === 0) return {};
+
+  const N = Math.max(corpus.length, 1);
+  const weights: Record<string, number> = {};
+
+  for (const term of terms) {
+    const lower = term.toLowerCase();
+    if (weights[lower]) continue; // dedupe
+
+    // Count documents containing this term
+    const escaped = lower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`);
+    let df = 0;
+    for (const chunk of corpus) {
+      if (regex.test(chunk.content.toLowerCase())) df++;
+    }
+
+    // IDF: log(N / (df + 1)) -- rare terms get higher weight
+    let idf = Math.log(N / (df + 1));
+
+    // Boost proper nouns (capitalized in original query)
+    if (/^[A-Z]/.test(term) && term.length > 2) {
+      idf *= 1.5;
+    }
+
+    // Floor: even common terms get some weight
+    weights[lower] = Math.max(0.1, idf);
+  }
+
+  return weights;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// QUERY SIGNAL EXTRACTION
+// ─────────────────────────────────────────────────────────────────────
+
+interface QuerySignals {
+  dates: ParsedDate[];
+  entities: string[];
+  phrases: string[];
+  isTemporalInference: boolean; // Query requires reasoning across time
+  temporalRelation: 'before' | 'after' | 'during' | 'around' | null;
+}
+
+interface ParsedDate {
+  year?: number;
+  month?: number;
+  day?: number;
+  raw: string;
+}
+
+const MONTH_MAP: Record<string, number> = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+  jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+function extractQuerySignals(query: string): QuerySignals {
+  const dates: ParsedDate[] = [];
+  const entities: string[] = [];
+  const phrases: string[] = [];
+  let isTemporalInference = false;
+  let temporalRelation: 'before' | 'after' | 'during' | 'around' | null = null;
+
+  // ── Date extraction ────────────────────────────────────────────
+
+  // ISO dates: 2025-12-15
+  for (const m of query.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
+    dates.push({ year: +m[1], month: +m[2], day: +m[3], raw: m[0] });
+  }
+
+  // "Month YYYY" or "Month DD, YYYY"
+  for (const m of query.matchAll(/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+(?:(\d{1,2})[,.]?\s+)?(\d{4})\b/gi)) {
+    dates.push({ month: MONTH_MAP[m[1].toLowerCase()], day: m[2] ? +m[2] : undefined, year: +m[3], raw: m[0] });
+  }
+
+  // "in YYYY" or standalone year
+  for (const m of query.matchAll(/\b(20[12]\d)\b/g)) {
+    if (!dates.some(d => d.year === +m[1])) {
+      dates.push({ year: +m[1], raw: m[0] });
+    }
+  }
+
+  // Month names without year
+  for (const m of query.matchAll(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/gi)) {
+    if (!dates.some(d => d.raw.toLowerCase().includes(m[1].toLowerCase()))) {
+      dates.push({ month: MONTH_MAP[m[1].toLowerCase()], raw: m[0] });
+    }
+  }
+
+  // Relative dates
+  const lower = query.toLowerCase();
+  if (lower.includes('yesterday')) {
+    const d = new Date(Date.now() - 86_400_000);
+    dates.push({ year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(), raw: 'yesterday' });
+  }
+  if (lower.includes('last week')) {
+    const d = new Date(Date.now() - 7 * 86_400_000);
+    dates.push({ year: d.getFullYear(), month: d.getMonth() + 1, raw: 'last week' });
+  }
+
+  // ── Entity extraction (proper nouns) ───────────────────────────
+  const STOP_WORDS = new Set([
+    'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'shall', 'can', 'what', 'when', 'where',
+    'which', 'who', 'whom', 'how', 'why', 'that', 'this', 'these', 'those',
+    'i', 'you', 'he', 'she', 'it', 'we', 'they', 'my', 'your', 'his',
+    'her', 'its', 'our', 'their', 'if', 'then', 'else', 'for', 'from',
+    'with', 'about', 'into', 'through', 'during', 'before', 'after',
+    'above', 'below', 'between', 'and', 'but', 'or', 'not', 'no', 'so',
+    'too', 'very', 'just', 'also', 'than', 'some', 'any', 'all', 'each',
+    'every', 'both', 'few', 'more', 'most', 'other', 'new', 'old', 'first',
+    'last', 'long', 'great', 'little', 'own', 'right', 'still', 'does',
+    'would', 'could', 'should', 'many', 'much', 'such', 'only',
+  ]);
+
+  const words = query.split(/\s+/);
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i].replace(/[^a-zA-Z'-]/g, '');
+    if (word.length < 2) continue;
+    if (STOP_WORDS.has(word.toLowerCase())) continue;
+
+    if (/^[A-Z][a-zA-Z'-]+$/.test(word)) {
+      // Accept proper nouns even at sentence start if they look like names
+      const isLikelyName = word.length >= 3 && word.length <= 20 && /^[A-Z][a-z]+$/.test(word);
+      const isAfterSentenceStart = i === 0 || /[.!?]$/.test(words[i - 1] ?? '');
+
+      if (isLikelyName || !isAfterSentenceStart) {
+        entities.push(word);
+      }
+    }
+  }
+
+  // Multi-word entities
+  for (const m of query.matchAll(/\b([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)+)\b/g)) {
+    const candidate = m[1];
+    if (candidate.split(/\s+/).every(w => !STOP_WORDS.has(w.toLowerCase()))) {
+      entities.push(candidate);
+    }
+  }
+
+  // ── Quoted phrase extraction ───────────────────────────────────
+  for (const m of query.matchAll(/"([^"]+)"/g)) {
+    if (m[1].length >= 3) phrases.push(m[1]);
+  }
+  for (const m of query.matchAll(/'([^']+)'/g)) {
+    if (m[1].length >= 3) phrases.push(m[1]);
+  }
+
+  // ── Implicit temporal language detection ────────────────────────
+  // Detects queries that require reasoning across time, even without
+  // explicit dates. These need time-window expansion and KG lookups.
+  const temporalPatterns: Array<{ pattern: RegExp; relation: 'before' | 'after' | 'during' | 'around' }> = [
+    { pattern: /\b(?:before|prior to|leading up to|until)\b/i, relation: 'before' },
+    { pattern: /\b(?:after|following|since|once .+ (?:started|happened|began))\b/i, relation: 'after' },
+    { pattern: /\b(?:during|while|when .+ was|at the time|at that (?:time|point)|in the (?:midst|middle) of)\b/i, relation: 'during' },
+    { pattern: /\b(?:around|about|approximately|circa)\b/i, relation: 'around' },
+  ];
+
+  for (const { pattern, relation } of temporalPatterns) {
+    if (pattern.test(query)) {
+      isTemporalInference = true;
+      temporalRelation = temporalRelation ?? relation;
+    }
+  }
+
+  // Also flag as temporal inference if query uses reasoning-across-time language
+  if (/\b(?:first|then|later|earlier|previously|back then|meanwhile|still|already|yet|anymore|no longer|used to|at the same time|changed|moved|switched|started|stopped|began|ended|joined|left|quit)\b/i.test(lower)) {
+    isTemporalInference = true;
+  }
+
+  // If we have dates + entities, it's likely temporal inference
+  // ("Where was Matt working in March 2024?")
+  if (dates.length > 0 && entities.length > 0) {
+    isTemporalInference = true;
+  }
+
+  return { dates, entities, phrases, isTemporalInference, temporalRelation };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// BOOST FUNCTIONS
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Temporal proximity boost -- up to +0.4.
+ */
+function temporalBoost(chunk: StoredChunk, queryDates: ParsedDate[]): number {
+  let maxBoost = 0;
+  const contentLower = chunk.content.toLowerCase();
+
+  for (const qd of queryDates) {
+    // Exact date string match in content
+    if (qd.raw && contentLower.includes(qd.raw.toLowerCase())) {
+      maxBoost = Math.max(maxBoost, 0.4);
+      continue;
+    }
+
+    // Year + month match in content
+    if (qd.month && qd.year) {
+      const monthName = Object.entries(MONTH_MAP).find(([, v]) => v === qd.month)?.[0] ?? '';
+      if (monthName && contentLower.includes(monthName) && chunk.content.includes(String(qd.year))) {
+        maxBoost = Math.max(maxBoost, 0.35);
+        continue;
+      }
+    }
+
+    // Year match in content
+    if (qd.year && chunk.content.includes(String(qd.year))) {
+      maxBoost = Math.max(maxBoost, 0.15);
+    }
+
+    // Month name match in content
+    if (qd.month) {
+      const monthNames = Object.entries(MONTH_MAP)
+        .filter(([, v]) => v === qd.month)
+        .map(([k]) => k);
+      if (monthNames.some(mn => contentLower.includes(mn))) {
+        maxBoost = Math.max(maxBoost, 0.2);
+      }
+    }
+
+    // Timestamp proximity
+    if (qd.year) {
+      try {
+        const chunkDate = new Date(chunk.createdAt);
+        const queryDate = new Date(qd.year, (qd.month ?? 1) - 1, qd.day ?? 15);
+        const daysDiff = Math.abs(chunkDate.getTime() - queryDate.getTime()) / 86_400_000;
+
+        if (daysDiff < 1) maxBoost = Math.max(maxBoost, 0.3);
+        else if (daysDiff < 7) maxBoost = Math.max(maxBoost, 0.2);
+        else if (daysDiff < 30) maxBoost = Math.max(maxBoost, 0.1);
+        else if (daysDiff < 90) maxBoost = Math.max(maxBoost, 0.05);
+      } catch { /* invalid date */ }
+    }
+  }
+
+  return maxBoost;
+}
+
+/**
+ * Entity / proper noun boost -- up to +0.5.
+ * Checks both exact and case-insensitive matches.
+ */
+function entityBoost(chunk: StoredChunk, entities: string[]): number {
+  if (entities.length === 0) return 0;
+
+  const contentLower = chunk.content.toLowerCase();
+  let matched = 0;
+
+  for (const entity of entities) {
+    const escaped = entity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`\\b${escaped}\\b`, 'i').test(contentLower)) {
+      matched++;
+    }
+  }
+
+  if (matched === 0) return 0;
+  // Scale: 1 match = +0.2, 2 = +0.35, 3+ = +0.5
+  return Math.min(0.5, 0.1 + matched * 0.15);
+}
+
+/**
+ * Quoted phrase boost -- up to +0.6.
+ */
+function phraseBoost(chunk: StoredChunk, phrases: string[]): number {
+  if (phrases.length === 0) return 0;
+
+  const contentLower = chunk.content.toLowerCase();
+  let matched = 0;
+
+  for (const phrase of phrases) {
+    if (contentLower.includes(phrase.toLowerCase())) {
+      matched++;
+    }
+  }
+
+  if (matched === 0) return 0;
+  return Math.min(0.6, matched * 0.3);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TIME WINDOW CONSTRUCTION
+// ─────────────────────────────────────────────────────────────────────
+
+interface TimeWindow {
+  start: number; // epoch ms
+  end: number;   // epoch ms
+}
+
+/**
+ * Build time windows from parsed dates for time-window retrieval.
+ * The window size adapts to date precision: specific day = +/- 3 days,
+ * month = full month +/- 7 days, year = full year.
+ */
+function buildTimeWindows(signals: QuerySignals): TimeWindow[] {
+  const windows: TimeWindow[] = [];
+
+  for (const qd of signals.dates) {
+    if (qd.year && qd.month && qd.day) {
+      // Specific date: +/- 3 days
+      const center = new Date(qd.year, qd.month - 1, qd.day).getTime();
+      const span = 3 * 86_400_000;
+      windows.push({ start: center - span, end: center + span });
+    } else if (qd.year && qd.month) {
+      // Month + year: full month +/- 7 days buffer
+      const monthStart = new Date(qd.year, qd.month - 1, 1).getTime();
+      const monthEnd = new Date(qd.year, qd.month, 0, 23, 59, 59).getTime();
+      const buffer = 7 * 86_400_000;
+
+      // Adjust window based on temporal relation
+      if (signals.temporalRelation === 'before') {
+        // "before March 2024" -- expand window earlier
+        windows.push({ start: monthStart - 90 * 86_400_000, end: monthEnd });
+      } else if (signals.temporalRelation === 'after') {
+        // "after March 2024" -- expand window later
+        windows.push({ start: monthStart, end: monthEnd + 90 * 86_400_000 });
+      } else {
+        windows.push({ start: monthStart - buffer, end: monthEnd + buffer });
+      }
+    } else if (qd.year) {
+      // Year only: full year
+      const yearStart = new Date(qd.year, 0, 1).getTime();
+      const yearEnd = new Date(qd.year, 11, 31, 23, 59, 59).getTime();
+      windows.push({ start: yearStart, end: yearEnd });
+    } else if (qd.month) {
+      // Month without year: assume current year, +/- 7 days
+      const year = new Date().getFullYear();
+      const monthStart = new Date(year, qd.month - 1, 1).getTime();
+      const monthEnd = new Date(year, qd.month, 0, 23, 59, 59).getTime();
+      const buffer = 7 * 86_400_000;
+      windows.push({ start: monthStart - buffer, end: monthEnd + buffer });
+    }
+  }
+
+  return windows;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// LLM RE-RANKING
+// ─────────────────────────────────────────────────────────────────────
+
+export async function selectRelevant(
+  config: SmartMemoryConfig,
+  query: string,
+  candidates: SearchResult[]
+): Promise<SearchResult[]> {
+  if (candidates.length <= 5) return candidates;
+
+  const manifest = candidates.map((r, i) =>
+    `[${i}] (${r.chunk.cognitiveLayer}) ${r.chunk.content.slice(0, 150)}`
+  ).join('\n');
+
+  try {
+    const response = await llmComplete(
+      config,
+      'You select which memories are most relevant for the user\'s current message. Return ONLY a JSON array of indices, e.g. [0, 2, 4]. Select up to 5 memories. Prefer procedural rules and recent corrections. Skip redundant or tangential memories.',
+      `User message: "${query.slice(0, 200)}"\n\nAvailable memories:\n${manifest}`,
+      { maxTokens: 50, temperature: 0 }
+    );
+
+    const match = response.match(/\[[\d,\s]*\]/);
+    if (match) {
+      const indices: number[] = JSON.parse(match[0]);
+      const selected = indices
+        .filter(i => i >= 0 && i < candidates.length)
+        .slice(0, 5)
+        .map(i => candidates[i]);
+      if (selected.length > 0) return selected;
+    }
+  } catch {
+    // Fall through to top 5
+  }
+
+  return candidates.slice(0, 5);
+}
+
+/**
+ * Format recalled memories for system prompt injection.
+ */
+export function formatRecalledMemories(results: SearchResult[]): string {
+  if (results.length === 0) return '';
+
+  const procedural = results.filter(r => r.chunk.cognitiveLayer === 'procedural');
+  const semantic = results.filter(r => r.chunk.cognitiveLayer === 'semantic');
+  const episodic = results.filter(r => r.chunk.cognitiveLayer === 'episodic');
+
+  const sections: string[] = [];
+
+  if (procedural.length > 0) {
+    sections.push('## How this user works');
+    sections.push(procedural.map(r => `- ${r.chunk.content}`).join('\n'));
+  }
+  if (semantic.length > 0) {
+    sections.push('## Known facts');
+    sections.push(semantic.map(r => `- [${r.chunk.type}] ${r.chunk.content}`).join('\n'));
+  }
+  if (episodic.length > 0) {
+    sections.push('## Recent context');
+    sections.push(episodic.map(r => `- ${r.chunk.content}`).join('\n'));
+  }
+
+  return `\n--- RECALLED MEMORIES ---\n${sections.join('\n\n')}\n`;
+}

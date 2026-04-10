@@ -1,0 +1,33 @@
+{
+  "name": "smart-memory-mcp",
+  "version": "2.0.0",
+  "description": "Smart Memory MCP server for Claude Code -- LLM-powered extraction, hybrid ANN search, tier lifecycle, spreading activation, procedural rules, WAL, Mem0, and session-state.",
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "smart-memory-mcp": "./dist/server.js"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "rm -rf dist && tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/server.js",
+    "bench": "node --import tsx benchmarks/bench.ts",
+    "bench:verbose": "node --import tsx benchmarks/bench.ts --verbose",
+    "bench:longmemeval": "node --import tsx benchmarks/longmemeval.ts",
+    "bench:locomo": "node --import tsx benchmarks/locomo.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.1",
+    "@huggingface/transformers": "^4.0.1",
+    "@lancedb/lancedb": "^0.27.2",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "mem0ai": "^2.4.5",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  }
+}
