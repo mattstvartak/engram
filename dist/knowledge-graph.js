@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
  *   ("Matt", "works-at", "Acme Corp", valid_from: 2024-01, valid_to: 2025-06)
  *   ("Matt", "works-at", "NewCo", valid_from: 2025-06, valid_to: null)
  *   ("finch-core", "uses", "TypeScript")
- *   ("smart-memory", "depends-on", "LanceDB")
+ *   ("engram", "depends-on", "LanceDB")
  */
 export async function addTriple(storage, subject, predicate, object, source, confidence) {
     // Check for existing active triple with same subject+predicate+object

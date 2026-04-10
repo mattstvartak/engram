@@ -2,7 +2,7 @@
 name: memory-health
 description: "Show memory system health, statistics, and maintenance status. Use when the user says /memory-health, asks about memory stats, wants to know how many memories are stored, or wants to run maintenance."
 user-invocable: true
-metadata: {"openclaw":{"emoji":"💊"}}
+metadata: {"version":"1.0.0-beta.2"}
 ---
 
 # Memory Health

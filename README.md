@@ -9,7 +9,7 @@ The core idea is that memory shouldn't just be "find similar text." When someone
 - [Benchmark Results](#benchmark-results)
 - [How It Works](#how-it-works)
 - [Compatibility](#compatibility)
-- [Installation](#installation) (Claude Code, Claude Desktop, Cursor/Windsurf/Cline, Source, OpenClaw)
+- [Installation](#installation) (Claude Code, Claude Desktop, Cursor/Windsurf/Cline, Source)
 - [Configuration](#configuration)
 - [Tools](#tools)
 - [Slash Commands](#slash-commands)
@@ -159,22 +159,13 @@ Engram is an MCP (Model Context Protocol) server. It works with any client that 
 - **Windsurf** (AI code editor)
 - **Cline** (VS Code extension)
 - **Continue** (VS Code / JetBrains extension)
-- **OpenClaw** (AI agent platform, also supports the plugin API)
 - **Any MCP-compatible client** (the protocol is open and standardized)
 
 If your tool can connect to an MCP server over stdio, Engram will work with it.
 
 ## Installation
 
-### Claude Code (plugin marketplace)
-
-```
-/plugin marketplace add mattstvartak/onenomad-plugins
-/plugin install engram@onenomad-plugins
-/reload-plugins
-```
-
-### Claude Code (direct)
+### Claude Code
 
 ```bash
 claude mcp add engram -- npx @onenomad/engram-memory
@@ -234,12 +225,6 @@ Then point your MCP client at `dist/server.js`:
 }
 ```
 
-### As an OpenClaw Plugin
-
-```bash
-openclaw plugins install engram
-```
-
 ## Configuration
 
 ### Environment Variables
@@ -248,36 +233,10 @@ openclaw plugins install engram
 |----------|---------|-------------|
 | `OPENROUTER_API_KEY` | (none) | Enables LLM extraction and reranking via [OpenRouter](https://openrouter.ai). Pick any model provider you want. Without it, the system uses heuristic extraction and keyword/vector search only. |
 | `MEM0_API_KEY` | (none) | Enables Mem0 cloud extraction as a second opinion |
-| `SMART_MEMORY_DATA_DIR` | `~/.claude/smart-memory` | Where data gets stored |
-| `SMART_MEMORY_EMBEDDING_MODEL` | `Xenova/all-MiniLM-L6-v2` | HuggingFace model for embeddings |
-| `SMART_MEMORY_DEVICE` | `cpu` | Embedding device: `cpu`, `dml` (DirectML), or `cuda` |
-| `SMART_MEMORY_MODEL` | `anthropic/claude-haiku-4.5` | OpenRouter model ID for LLM features. Only used when `OPENROUTER_API_KEY` is set. Any model on [openrouter.ai](https://openrouter.ai) works. |
-
-### Plugin Config (OpenClaw)
-
-```json
-{
-  "plugins": {
-    "entries": {
-      "openclaw-smart-memory-plugin": {
-        "enabled": true,
-        "config": {
-          "extractionProvider": "local",
-          "maxRecallChunks": 10,
-          "maxRecallTokens": 1500
-        }
-      }
-    }
-  }
-}
-```
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `extractionProvider` | `local` | `local`, `mem0`, or `both` |
-| `maxRecallChunks` | `10` | Max memories per search |
-| `maxRecallTokens` | `1500` | Token budget for recalled memories |
-| `extractionThreshold` | `3` | Min messages before auto-extraction kicks in |
+| `ENGRAM_DATA_DIR` | `~/.claude/engram` | Where data gets stored |
+| `ENGRAM_EMBEDDING_MODEL` | `Xenova/all-MiniLM-L6-v2` | HuggingFace model for embeddings |
+| `ENGRAM_DEVICE` | `cpu` | Embedding device: `cpu`, `dml` (DirectML), or `cuda` |
+| `ENGRAM_MODEL` | `anthropic/claude-haiku-4.5` | OpenRouter model ID for LLM features. Only used when `OPENROUTER_API_KEY` is set. Any model on [openrouter.ai](https://openrouter.ai) works. |
 
 ## Tools
 
@@ -326,7 +285,7 @@ The MCP server exposes 19 tools organized into four groups.
 
 ## Slash Commands
 
-These work in any MCP-compatible client (Claude Code, Cursor, OpenClaw, etc.). The MCP server advertises them in its instructions so the agent knows how to handle them. SKILL.md files are also included for platforms that discover skills from the filesystem.
+These work in any MCP-compatible client (Claude Code, Cursor, etc.). The MCP server advertises them in its instructions so the agent knows how to handle them. SKILL.md files are also included for platforms that discover skills from the filesystem.
 
 | Command | What it does |
 |---------|-------------|
@@ -365,7 +324,7 @@ Conversations --> Extract --> LanceDB (vectors + metadata)
 Everything lives locally:
 
 ```
-~/.claude/smart-memory/
+~/.claude/engram/
 ├── SESSION-STATE.md      # Hot RAM scratchpad
 ├── diary/                # Daily diary entries
 │   └── YYYY-MM-DD.md
@@ -418,7 +377,7 @@ No telemetry. No analytics. No phoning home.
 
 ### Local storage
 
-All memory data stays on disk at `~/.claude/smart-memory/`. Nothing gets sent anywhere unless you explicitly configure an external provider.
+All memory data stays on disk at `~/.claude/engram/`. Nothing gets sent anywhere unless you explicitly configure an external provider.
 
 ## Use Cases
 
@@ -455,7 +414,7 @@ You can run Engram without Persona and it works fine. But if you want an AI that
 Licensed under the [Business Source License 1.1](LICENSE).
 
 - **Licensor:** Matt Stvartak / OneNomad LLC
-- **Licensed Work:** Engram (Smart Memory MCP), Copyright (c) 2026 Matt Stvartak / OneNomad LLC
+- **Licensed Work:** Engram, Copyright (c) 2026 Matt Stvartak / OneNomad LLC
 - **Additional Use Grant:** You may use the Licensed Work for personal, educational, and non-commercial purposes. Production use in a commercial product or service requires a separate commercial license.
 - **Change Date:** April 10, 2030
 - **Change License:** Apache License, Version 2.0

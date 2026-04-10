@@ -2,7 +2,7 @@
 name: forget
 description: "Remove or correct specific memories. Use when the user says /forget, 'forget that', 'that's wrong', 'delete that memory', or wants to correct something Engram remembers incorrectly."
 user-invocable: true
-metadata: {"openclaw":{"emoji":"🗑️"}}
+metadata: {"version":"1.0.0-beta.2"}
 ---
 
 # Forget

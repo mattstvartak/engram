@@ -52,10 +52,10 @@ function json(data: any) { return text(JSON.stringify(data, null, 2)); }
 // ── MCP Server ──────────────────────────────────────────────────────
 
 const server = new McpServer(
-  { name: 'smart-memory', version: '2.0.0' },
+  { name: 'engram', version: '2.0.0' },
   {
     instructions: [
-      'Smart Memory MCP server with hybrid vector search, tier lifecycle, spreading activation, procedural rules, knowledge graph, and agent diary.',
+      'Engram MCP server with hybrid vector search, tier lifecycle, spreading activation, procedural rules, knowledge graph, and agent diary.',
       '',
       'PROACTIVE STORAGE (critical -- do not wait to be asked):',
       'When the user shares personal details, professional background, preferences, decisions, corrections, project context, or any fact worth recalling in future conversations, IMMEDIATELY store it using memory_ingest and/or memory_kg_add before responding.',
@@ -394,7 +394,7 @@ server.registerTool(
       diaryEntries: diaryDates.length,
       llmAvailable: isLlmAvailable(),
       extractionMode: isLlmAvailable() ? 'llm' : 'heuristic',
-      embeddingModel: process.env.SMART_MEMORY_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2',
+      embeddingModel: process.env.ENGRAM_EMBEDDING_MODEL ?? process.env.SMART_MEMORY_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2',
       mem0Enabled: !!config.mem0ApiKey,
       sessionTask: state.currentTask || null,
     });
@@ -623,10 +623,10 @@ server.registerTool(
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Smart Memory MCP server running on stdio');
+  console.error('Engram MCP server running on stdio');
   console.error(`Data dir: ${config.dataDir}`);
   console.error(`LLM: ${isLlmAvailable() ? 'enabled' : 'disabled (heuristic mode)'}`);
-  console.error(`Embeddings: local (${process.env.SMART_MEMORY_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2'})`);
+  console.error(`Embeddings: local (${process.env.ENGRAM_EMBEDDING_MODEL ?? process.env.SMART_MEMORY_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2'})`);
   console.error(`Mem0: ${config.mem0ApiKey ? 'enabled' : 'disabled'}`);
 }
 

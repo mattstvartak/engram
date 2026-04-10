@@ -2,7 +2,7 @@
 name: recall
 description: "Search and surface memories about a topic, person, event, or time period. Use when the user says /recall or asks 'what do you know about X', 'what did I tell you about X', 'do you remember X'. Searches Engram's hybrid pipeline (vector + keyword + temporal + knowledge graph + spreading activation)."
 user-invocable: true
-metadata: {"openclaw":{"emoji":"🔍"}}
+metadata: {"version":"1.0.0-beta.2"}
 ---
 
 # Recall

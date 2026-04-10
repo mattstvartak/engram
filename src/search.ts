@@ -752,34 +752,46 @@ export async function selectRelevant(
   query: string,
   candidates: SearchResult[]
 ): Promise<SearchResult[]> {
-  if (candidates.length <= 5) return candidates;
+  if (candidates.length <= 3) return candidates;
 
   const manifest = candidates.map((r, i) =>
-    `[${i}] (${r.chunk.cognitiveLayer}) ${r.chunk.content.slice(0, 150)}`
+    `[${i}] (${r.chunk.cognitiveLayer}) ${r.chunk.content.slice(0, 200)}`
   ).join('\n');
 
   try {
     const response = await llmComplete(
       config,
-      'You select which memories are most relevant for the user\'s current message. Return ONLY a JSON array of indices, e.g. [0, 2, 4]. Select up to 5 memories. Prefer procedural rules and recent corrections. Skip redundant or tangential memories.',
-      `User message: "${query.slice(0, 200)}"\n\nAvailable memories:\n${manifest}`,
-      { maxTokens: 50, temperature: 0 }
+      'You rerank memories by relevance to the user\'s message. Return ONLY a JSON array of ALL indices ordered from most to least relevant, e.g. [3, 0, 5, 1, 2, 4]. Include every index — do not drop any.',
+      `User message: "${query.slice(0, 300)}"\n\nMemories:\n${manifest}`,
+      { maxTokens: 200, temperature: 0 }
     );
 
     const match = response.match(/\[[\d,\s]*\]/);
     if (match) {
       const indices: number[] = JSON.parse(match[0]);
-      const selected = indices
-        .filter(i => i >= 0 && i < candidates.length)
-        .slice(0, 5)
-        .map(i => candidates[i]);
-      if (selected.length > 0) return selected;
+      const seen = new Set<number>();
+      const reordered: SearchResult[] = [];
+
+      // Add LLM-ranked results first
+      for (const i of indices) {
+        if (i >= 0 && i < candidates.length && !seen.has(i)) {
+          seen.add(i);
+          reordered.push(candidates[i]);
+        }
+      }
+
+      // Append any the LLM missed (preserving original order)
+      for (let i = 0; i < candidates.length; i++) {
+        if (!seen.has(i)) reordered.push(candidates[i]);
+      }
+
+      return reordered;
     }
   } catch {
-    // Fall through to top 5
+    // Fall through to original order
   }
 
-  return candidates.slice(0, 5);
+  return candidates;
 }
 
 /**

@@ -2,7 +2,7 @@
 name: memory-source
 description: "Toggle which memory system the agent uses: 'engram' (exclusive Engram MCP), 'off' (no persistent memory), or 'hybrid' (Engram + native client memory). Use when the user says /memory-source or wants to switch memory backends."
 user-invocable: true
-metadata: {"openclaw":{"emoji":"🔌"}}
+metadata: {"version":"1.0.0-beta.2"}
 ---
 
 # Memory Source

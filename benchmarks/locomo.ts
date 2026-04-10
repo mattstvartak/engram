@@ -330,7 +330,7 @@ async function main(): Promise<void> {
 
   console.log('Comparison vs MemPalace (top-10, no rerank):');
   console.log(`  MemPalace hybrid v5:      R@10=88.9%`);
-  console.log(`  Smart Memory (this run):  R@10=${(avgR10 * 100).toFixed(1)}%`);
+  console.log(`  Engram (this run):        R@10=${(avgR10 * 100).toFixed(1)}%`);
   console.log();
 }
 

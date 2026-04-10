@@ -75,7 +75,7 @@ export interface SearchResult {
     score: number;
 }
 export interface SmartMemoryConfig {
-    /** Root data directory (default: ~/.claude/smart-memory) */
+    /** Root data directory (default: ~/.claude/engram) */
     dataDir: string;
     /** Days before daily tier moves to short-term (default: 2) */
     dailyRetentionDays: number;

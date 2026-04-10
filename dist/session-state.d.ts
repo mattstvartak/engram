@@ -6,7 +6,7 @@
  * and designed for the current working context.
  *
  * Persisted as a markdown file so it can be injected directly into
- * OpenClaw's workspace bootstrap.
+ * the agent's system prompt.
  */
 export interface SessionState {
     currentTask: string;

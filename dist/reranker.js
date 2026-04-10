@@ -6,11 +6,11 @@ async function getReranker() {
     if (!_rerankerLoading) {
         _rerankerLoading = (async () => {
             const { pipeline } = await import('@huggingface/transformers');
-            const modelName = process.env.SMART_MEMORY_RERANK_MODEL ?? 'Xenova/ms-marco-MiniLM-L-6-v2';
-            const device = process.env.SMART_MEMORY_DEVICE ?? 'cpu';
-            console.error(`Smart Memory: loading reranker model ${modelName} (device: ${device})...`);
+            const modelName = process.env.ENGRAM_RERANK_MODEL ?? process.env.SMART_MEMORY_RERANK_MODEL ?? 'Xenova/ms-marco-MiniLM-L-6-v2';
+            const device = process.env.ENGRAM_DEVICE ?? process.env.SMART_MEMORY_DEVICE ?? 'cpu';
+            console.error(`Engram: loading reranker model ${modelName} (device: ${device})...`);
             _reranker = await pipeline('text-classification', modelName, { device });
-            console.error('Smart Memory: reranker model ready');
+            console.error('Engram: reranker model ready');
             return _reranker;
         })();
     }

@@ -5,7 +5,7 @@
       "args": ["{pluginDir}/dist/server.js"],
       "env": {
         "OPENROUTER_API_KEY": "",
-        "SMART_MEMORY_MODEL": "anthropic/claude-haiku-4.5"
+        "ENGRAM_MODEL": "anthropic/claude-haiku-4.5"
       }
     }
   }

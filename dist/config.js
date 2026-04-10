@@ -4,42 +4,48 @@ import { DEFAULT_CONFIG } from './types.js';
 /**
  * Load config from environment variables.
  *
- * Data stored under ~/.claude/smart-memory by default.
- * Override with SMART_MEMORY_DATA_DIR.
+ * Data stored under ~/.claude/engram by default.
+ * Override with ENGRAM_DATA_DIR (or legacy SMART_MEMORY_DATA_DIR).
  *
  * LLM calls use OPENROUTER_API_KEY (for extraction, re-ranking).
  * Any model provider on openrouter.ai works.
  * Mem0 uses MEM0_API_KEY (optional cloud extraction provider).
  */
+/** Read env var with new ENGRAM_ prefix, falling back to legacy SMART_MEMORY_ prefix. */
+function env(name, legacyName) {
+    return process.env[name] ?? (legacyName ? process.env[legacyName] : undefined);
+}
 export function loadConfig(overrides) {
     const config = {
         ...DEFAULT_CONFIG,
-        dataDir: process.env.SMART_MEMORY_DATA_DIR ?? join(homedir(), '.claude', 'smart-memory'),
+        dataDir: env('ENGRAM_DATA_DIR', 'SMART_MEMORY_DATA_DIR') ?? join(homedir(), '.claude', 'engram'),
         ...overrides,
     };
     if (!config.mem0ApiKey) {
         config.mem0ApiKey = process.env.MEM0_API_KEY ?? '';
     }
-    if (process.env.SMART_MEMORY_EXTRACTION_PROVIDER) {
-        config.extractionProvider = process.env.SMART_MEMORY_EXTRACTION_PROVIDER;
+    const extractionProvider = env('ENGRAM_EXTRACTION_PROVIDER', 'SMART_MEMORY_EXTRACTION_PROVIDER');
+    if (extractionProvider) {
+        config.extractionProvider = extractionProvider;
     }
     // v2 feature flags (env vars override defaults)
-    const envBool = (key, fallback) => {
-        const v = process.env[key];
+    const envBool = (key, legacyKey, fallback) => {
+        const v = env(key, legacyKey);
         if (v === 'true' || v === '1')
             return true;
         if (v === 'false' || v === '0')
             return false;
         return fallback;
     };
-    config.enableRRF = envBool('SMART_MEMORY_ENABLE_RRF', config.enableRRF);
-    config.enableFSRS = envBool('SMART_MEMORY_ENABLE_FSRS', config.enableFSRS);
-    config.enableContextualPrefix = envBool('SMART_MEMORY_ENABLE_CONTEXTUAL_PREFIX', config.enableContextualPrefix);
-    config.enableBiasedReplay = envBool('SMART_MEMORY_ENABLE_BIASED_REPLAY', config.enableBiasedReplay);
-    config.enableCrossEncoderRerank = envBool('SMART_MEMORY_ENABLE_CROSS_ENCODER_RERANK', config.enableCrossEncoderRerank);
-    config.enableEpisodicConsolidation = envBool('SMART_MEMORY_ENABLE_EPISODIC_CONSOLIDATION', config.enableEpisodicConsolidation);
-    if (process.env.SMART_MEMORY_EMBEDDING_DIM) {
-        config.embeddingDimensions = parseInt(process.env.SMART_MEMORY_EMBEDDING_DIM, 10);
+    config.enableRRF = envBool('ENGRAM_ENABLE_RRF', 'SMART_MEMORY_ENABLE_RRF', config.enableRRF);
+    config.enableFSRS = envBool('ENGRAM_ENABLE_FSRS', 'SMART_MEMORY_ENABLE_FSRS', config.enableFSRS);
+    config.enableContextualPrefix = envBool('ENGRAM_ENABLE_CONTEXTUAL_PREFIX', 'SMART_MEMORY_ENABLE_CONTEXTUAL_PREFIX', config.enableContextualPrefix);
+    config.enableBiasedReplay = envBool('ENGRAM_ENABLE_BIASED_REPLAY', 'SMART_MEMORY_ENABLE_BIASED_REPLAY', config.enableBiasedReplay);
+    config.enableCrossEncoderRerank = envBool('ENGRAM_ENABLE_CROSS_ENCODER_RERANK', 'SMART_MEMORY_ENABLE_CROSS_ENCODER_RERANK', config.enableCrossEncoderRerank);
+    config.enableEpisodicConsolidation = envBool('ENGRAM_ENABLE_EPISODIC_CONSOLIDATION', 'SMART_MEMORY_ENABLE_EPISODIC_CONSOLIDATION', config.enableEpisodicConsolidation);
+    const embeddingDim = env('ENGRAM_EMBEDDING_DIM', 'SMART_MEMORY_EMBEDDING_DIM');
+    if (embeddingDim) {
+        config.embeddingDimensions = parseInt(embeddingDim, 10);
     }
     return config;
 }

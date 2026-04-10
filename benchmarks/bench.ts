@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Smart Memory Benchmark Suite
+ * Engram Benchmark Suite
  *
  * Tests retrieval quality across the same categories as MemPalace's benchmarks:
  *   - Single-fact recall (user facts, preferences)
@@ -203,7 +203,7 @@ interface BenchResult {
 
 async function runBenchmark(verbose: boolean): Promise<void> {
   // Create isolated test environment
-  const benchDir = join(tmpdir(), `smart-memory-bench-${Date.now()}`);
+  const benchDir = join(tmpdir(), `engram-bench-${Date.now()}`);
   mkdirSync(benchDir, { recursive: true });
 
   const config: SmartMemoryConfig = {

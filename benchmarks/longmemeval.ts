@@ -291,7 +291,7 @@ async function main(): Promise<void> {
   console.log(`  MemPalace raw ChromaDB:        R@5=96.6%  (zero API)`);
   console.log(`  MemPalace hybrid v4 (held-out): R@5=98.4%  (zero API)`);
   console.log(`  MemPalace hybrid v4 + Haiku:   R@5=100%   (Haiku rerank)`);
-  console.log(`  Smart Memory (this run):       R@5=${(avgR5 * 100).toFixed(1)}%  (${useRerank ? 'with rerank' : 'zero API'})`);
+  console.log(`  Engram (this run):             R@5=${(avgR5 * 100).toFixed(1)}%  (${useRerank ? 'with rerank' : 'zero API'})`);
   console.log();
 }
 

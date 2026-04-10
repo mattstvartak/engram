@@ -2,7 +2,7 @@
 name: memory
 description: "Quick memory operations: save something, check for duplicates, view diary, or import memories from other sources. Use when the user says /memory, wants to save something specific, import from ChatGPT/Claude, or view session diary entries."
 user-invocable: true
-metadata: {"openclaw":{"emoji":"💾"}}
+metadata: {"version":"1.0.0-beta.2"}
 ---
 
 # Memory

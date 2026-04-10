@@ -2,7 +2,7 @@
 name: knowledge
 description: "View and manage the knowledge graph: entities, relationships, and timelines. Use when the user says /knowledge, asks about entity relationships ('who works where', 'what tools do I use'), or wants to see the timeline of a specific entity."
 user-invocable: true
-metadata: {"openclaw":{"emoji":"🕸️"}}
+metadata: {"version":"1.0.0-beta.2"}
 ---
 
 # Knowledge

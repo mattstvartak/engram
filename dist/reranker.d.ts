@@ -6,7 +6,7 @@
  * similarity alone. Benchmarks show Hit@1 improvement from ~63% to ~83%.
  *
  * Default model: Xenova/ms-marco-MiniLM-L-6-v2
- * Override: SMART_MEMORY_RERANK_MODEL env var
+ * Override: ENGRAM_RERANK_MODEL env var
  *
  * Lazy-loaded on first call (same pattern as embedding model).
  */
