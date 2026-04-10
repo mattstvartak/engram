@@ -186,12 +186,12 @@ openclaw plugins install engram
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | (none) | Enables LLM extraction and reranking. Without it, the system uses heuristic extraction and keyword/vector search only. |
+| `OPENROUTER_API_KEY` | (none) | Enables LLM extraction and reranking via [OpenRouter](https://openrouter.ai). Pick any model provider you want. Without it, the system uses heuristic extraction and keyword/vector search only. |
 | `MEM0_API_KEY` | (none) | Enables Mem0 cloud extraction as a second opinion |
 | `SMART_MEMORY_DATA_DIR` | `~/.claude/smart-memory` | Where data gets stored |
 | `SMART_MEMORY_EMBEDDING_MODEL` | `Xenova/all-MiniLM-L6-v2` | HuggingFace model for embeddings |
 | `SMART_MEMORY_DEVICE` | `cpu` | Embedding device: `cpu`, `dml` (DirectML), or `cuda` |
-| `SMART_MEMORY_MODEL` | `claude-haiku-4-5-20251001` | Claude model for LLM features |
+| `SMART_MEMORY_MODEL` | `google/gemini-2.0-flash-001` | OpenRouter model ID for LLM features (any model on openrouter.ai works) |
 
 ### Plugin Config (OpenClaw)
 
@@ -307,7 +307,7 @@ Everything lives locally:
 
 - **LanceDB** for the embedded vector database, handles ANN search natively
 - **@huggingface/transformers** for local embedding inference (Xenova/all-MiniLM-L6-v2, 384 dimensions, 23MB)
-- **@anthropic-ai/sdk** (optional) for LLM-powered extraction and reranking
+- **openai** (optional) for LLM-powered extraction and reranking via OpenRouter
 - **mem0ai** (optional) for Mem0 cloud extraction
 - **@modelcontextprotocol/sdk** for the MCP server protocol
 
@@ -323,7 +323,7 @@ npm run bench:locomo
 # Quick test with a subset
 npm run bench:locomo -- --limit 200
 
-# With LLM reranking (requires ANTHROPIC_API_KEY)
+# With LLM reranking (requires OPENROUTER_API_KEY)
 npm run bench:locomo -- --rerank
 
 # Verbose output (shows individual misses)
@@ -339,7 +339,7 @@ This plugin contacts exactly two services:
 1. **HuggingFace Hub** for a one-time model download on first run (~23MB), cached after that
 2. **Mem0 API**, only when `extractionProvider` is `mem0` or `both`
 
-If you set `ANTHROPIC_API_KEY`, it also contacts the Anthropic API for LLM features. Without any API keys, everything runs fully local.
+If you set `OPENROUTER_API_KEY`, it contacts the OpenRouter API for LLM features (you pick the model provider). Without any API keys, everything runs fully local.
 
 No telemetry. No analytics. No phoning home.
 

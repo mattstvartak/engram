@@ -333,7 +333,7 @@ async function runBenchmark(verbose: boolean): Promise<void> {
   console.log(`  Negative resistance  ${totalNegPass}/${results.length} passed`);
   console.log(`  Memories seeded      ${chunkCount}`);
   console.log(`  Embedding model      ${process.env.SMART_MEMORY_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2'}`);
-  console.log(`  LLM available        ${!!process.env.ANTHROPIC_API_KEY}`);
+  console.log(`  LLM available        ${!!process.env.OPENROUTER_API_KEY}`);
   console.log();
 
   // ── Knowledge Graph Test ────────────────────────────────────────

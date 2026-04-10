@@ -208,7 +208,7 @@ server.registerTool(
   'memory_extract',
   {
     title: 'Memory Extract',
-    description: 'Extract memories from a conversation. Uses LLM if ANTHROPIC_API_KEY is set, otherwise falls back to heuristic extraction. Classifies into facts, preferences, decisions, corrections.',
+    description: 'Extract memories from a conversation. Uses LLM if OPENROUTER_API_KEY is set, otherwise falls back to heuristic extraction. Classifies into facts, preferences, decisions, corrections.',
     inputSchema: z.object({
       messages: z.string().describe('JSON string of message array: [{role: "user", content: "..."}, ...]'),
       conversationId: z.string().optional().describe('Session/conversation identifier.'),
