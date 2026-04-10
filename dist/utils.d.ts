@@ -6,3 +6,11 @@ export declare function isDuplicate(content: string, existing: StoredChunk[]): b
 export declare function getEdgeTargetIds(edges: MemoryEdge[]): string[];
 export declare function addEdge(edges: MemoryEdge[], targetId: string, relationship: MemoryEdge['relationship'], weight?: number): MemoryEdge[];
 export declare function strengthenEdge(edges: MemoryEdge[], targetId: string, delta: number): MemoryEdge[];
+export declare function buildContextPrefix(chunk: {
+    type?: string;
+    cognitiveLayer?: string;
+    domain?: string;
+    topic?: string;
+    tags?: string[];
+    createdAt?: string;
+}): string;

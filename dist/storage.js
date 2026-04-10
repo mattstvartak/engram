@@ -184,6 +184,19 @@ export class Storage {
             values.domain = updates.domain;
         if (updates.topic !== undefined)
             values.topic = updates.topic;
+        // v2 fields
+        if (updates.stability !== undefined)
+            values.stability = updates.stability;
+        if (updates.difficulty !== undefined)
+            values.difficulty = updates.difficulty;
+        if (updates.temporalAnchor !== undefined)
+            values.temporal_anchor = updates.temporalAnchor;
+        if (updates.consolidationLevel !== undefined)
+            values.consolidation_level = updates.consolidationLevel;
+        if (updates.sourceChunkIds !== undefined)
+            values.source_chunk_ids = JSON.stringify(updates.sourceChunkIds);
+        if (updates.embeddingVersion !== undefined)
+            values.embedding_version = updates.embeddingVersion;
         if (Object.keys(values).length === 0)
             return;
         await this.chunks.update({ where: `id = '${esc(id)}'`, values });
@@ -384,6 +397,13 @@ function rowToChunk(row) {
         embedding,
         relatedMemories: JSON.parse(row.related_memories ?? '[]'),
         recallOutcomes: JSON.parse(row.recall_outcomes ?? '[]'),
+        // v2 fields (backward-compatible defaults)
+        stability: row.stability ?? 1.0,
+        difficulty: row.difficulty ?? 0.3,
+        temporalAnchor: row.temporal_anchor ?? undefined,
+        consolidationLevel: row.consolidation_level ?? 0,
+        sourceChunkIds: row.source_chunk_ids ? JSON.parse(row.source_chunk_ids) : undefined,
+        embeddingVersion: row.embedding_version ?? 1,
     };
 }
 function rowToTriple(row) {

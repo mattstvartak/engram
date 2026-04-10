@@ -1,5 +1,6 @@
 import { strengthenEdge } from './utils.js';
 import { reconsolidate } from './extractor.js';
+import { computeFSRSUpdate } from './consolidator.js';
 /**
  * Record the outcome of recalled memories for the feedback loop.
  * On "helpful" outcomes, triggers reconsolidation and co-recall edge strengthening.
@@ -18,7 +19,9 @@ export async function recordRecallOutcome(config, storage, chunkIds, outcome, co
             importance = Math.max(0.1, importance - 0.1);
         else if (outcome === 'irrelevant')
             importance = Math.max(0.1, importance - 0.05);
-        await storage.updateChunk(id, { recallOutcomes: outcomes, importance });
+        // FSRS stability update
+        const fsrsUpdate = config.enableFSRS ? computeFSRSUpdate(chunk, outcome) : {};
+        await storage.updateChunk(id, { recallOutcomes: outcomes, importance, ...fsrsUpdate });
         if (outcome === 'helpful') {
             for (const otherId of chunkIds) {
                 if (otherId === id)

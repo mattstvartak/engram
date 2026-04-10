@@ -1,6 +1,9 @@
+import type { SmartMemoryConfig } from './types.js';
+import { DEFAULT_CONFIG } from './types.js';
 import type { StoredChunk } from './storage.js';
 import { Storage } from './storage.js';
 import { cosineSimilarity, getEdgeTargetIds, addEdge } from './utils.js';
+import { consolidateEpisodic } from './episodic-consolidator.js';
 
 export interface ConsolidationStats {
   linked: number;
@@ -10,27 +13,45 @@ export interface ConsolidationStats {
   reactivated: number;
   dailyMoved: number;
   merged: number;
+  episodicClustered: number;
+  episodicSummarized: number;
 }
 
 /**
  * Background consolidation pass: links, decays, promotes, demotes, and merges memories.
  * Run this periodically (e.g., daily or at session start).
  */
-export async function consolidate(storage: Storage): Promise<ConsolidationStats> {
+export async function consolidate(storage: Storage, config?: SmartMemoryConfig): Promise<ConsolidationStats> {
+  const cfg = config ?? DEFAULT_CONFIG;
   const stats: ConsolidationStats = {
     linked: 0, decayed: 0, promoted: 0, demoted: 0,
     reactivated: 0, dailyMoved: 0, merged: 0,
+    episodicClustered: 0, episodicSummarized: 0,
   };
 
-  const chunks = await storage.listChunks();
+  let chunks = await storage.listChunks();
+
+  // Biased replay: prioritize chunks by importance * recency * surprise
+  if (cfg.enableBiasedReplay) {
+    chunks = sortByReplayPriority(chunks);
+  }
 
   stats.dailyMoved = await processDailyTier(storage, chunks);
   stats.promoted = await promoteChunks(storage, chunks);
   stats.demoted = await demoteToArchive(storage, chunks);
   stats.reactivated = await reactivateArchived(storage, chunks);
   stats.linked = await linkRelated(storage, chunks);
-  stats.decayed = await decayImportance(storage, chunks) + await decayIrrelevant(storage, chunks);
+  stats.decayed = cfg.enableFSRS
+    ? await decayFSRS(storage, chunks) + await decayIrrelevant(storage, chunks)
+    : await decayImportance(storage, chunks) + await decayIrrelevant(storage, chunks);
   stats.merged = await mergeNearDuplicates(storage, chunks);
+
+  // Episodic-to-semantic consolidation (Improvement 8)
+  if (cfg.enableEpisodicConsolidation) {
+    const episodic = await consolidateEpisodic(cfg, storage);
+    stats.episodicClustered = episodic.clustered;
+    stats.episodicSummarized = episodic.summarized;
+  }
 
   return stats;
 }
@@ -264,6 +285,102 @@ async function mergeNearDuplicates(storage: Storage, chunks: StoredChunk[]): Pro
     }
   }
   return merged;
+}
+
+// ── FSRS Decay (Improvement 3) ─────────────────────────────────────
+// Free Spaced Repetition Scheduler: R = (1 + t/(9*S))^(-1)
+// More principled than exponential decay. Stability grows with successful recall.
+
+function fsrsRetrievability(t: number, S: number): number {
+  return Math.pow(1 + t / (9 * S), -1);
+}
+
+async function decayFSRS(storage: Storage, chunks: StoredChunk[]): Promise<number> {
+  let decayed = 0;
+  const now = Date.now();
+  const floors: Record<string, number> = { procedural: 0.15, semantic: 0.10, episodic: 0.05 };
+
+  for (const chunk of chunks) {
+    if (chunk.tier === 'archive') continue;
+    const lastTouch = chunk.lastRecalledAt
+      ? new Date(chunk.lastRecalledAt).getTime()
+      : new Date(chunk.createdAt).getTime();
+
+    const daysSinceTouch = (now - lastTouch) / 86_400_000;
+    if (daysSinceTouch < 3) continue;
+
+    const stability = chunk.stability ?? 1.0;
+    const floor = floors[chunk.cognitiveLayer] ?? 0.10;
+    const retrievability = fsrsRetrievability(daysSinceTouch, stability);
+    const newImportance = Math.max(floor, chunk.importance * retrievability);
+
+    if (Math.abs(newImportance - chunk.importance) > 0.01) {
+      await storage.updateChunk(chunk.id, { importance: newImportance });
+      decayed++;
+    }
+  }
+  return decayed;
+}
+
+/**
+ * Update FSRS stability after a recall outcome.
+ * Call this from outcome.ts when a memory is recalled.
+ */
+export function computeFSRSUpdate(
+  chunk: StoredChunk,
+  outcome: 'helpful' | 'corrected' | 'irrelevant'
+): { stability: number; difficulty: number } {
+  const S = chunk.stability ?? 1.0;
+  const D = chunk.difficulty ?? 0.3;
+
+  switch (outcome) {
+    case 'helpful': {
+      // Stability growth: easier memories grow faster
+      const growth = S * (1 + Math.exp(0.1) * (11 - D * 10) * Math.pow(S, -0.2));
+      return { stability: Math.min(365, growth), difficulty: Math.max(0, D - 0.02) };
+    }
+    case 'corrected': {
+      // Halve stability, increase difficulty
+      return { stability: Math.max(0.5, S * 0.5), difficulty: Math.min(1.0, D + 0.1) };
+    }
+    case 'irrelevant': {
+      // Reduce stability, slight difficulty increase
+      return { stability: Math.max(0.5, S * 0.8), difficulty: Math.min(1.0, D + 0.05) };
+    }
+  }
+}
+
+// ── Biased Replay (Improvement 5) ──────────────────────────────────
+// Prioritize consolidation by importance * recency * surprise.
+// High-surprise memories (corrections, contradictions) get extra attention.
+
+function sortByReplayPriority(chunks: StoredChunk[]): StoredChunk[] {
+  const now = Date.now();
+
+  return [...chunks].sort((a, b) => {
+    const priorityA = replayPriority(a, now);
+    const priorityB = replayPriority(b, now);
+    return priorityB - priorityA;
+  });
+}
+
+function replayPriority(chunk: StoredChunk, now: number): number {
+  const lastTouch = chunk.lastRecalledAt
+    ? new Date(chunk.lastRecalledAt).getTime()
+    : new Date(chunk.createdAt).getTime();
+  const recencyDays = (now - lastTouch) / 86_400_000;
+  const recency = Math.exp(-recencyDays / 30); // Half-life ~30 days
+
+  const importance = chunk.importance;
+
+  // Surprise: corrections and corrected outcomes score higher
+  let surprise = 0;
+  if (chunk.type === 'correction') surprise += 0.5;
+  const recentOutcomes = chunk.recallOutcomes.slice(-5);
+  const correctedCount = recentOutcomes.filter(o => o.outcome === 'corrected').length;
+  surprise += correctedCount * 0.2;
+
+  return importance * recency * (1 + surprise);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

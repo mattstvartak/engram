@@ -18,6 +18,12 @@ export interface MemoryChunk {
     lastRecalledAt: string | null;
     recallCount: number;
     embedding?: number[];
+    stability?: number;
+    difficulty?: number;
+    temporalAnchor?: number;
+    consolidationLevel?: number;
+    sourceChunkIds?: string[];
+    embeddingVersion?: number;
 }
 export interface MemoryEdge {
     targetId: string;
@@ -89,5 +95,19 @@ export interface SmartMemoryConfig {
     mem0UserId: string;
     /** Extraction provider: 'local' or 'mem0' or 'both' (default: 'local') */
     extractionProvider: 'local' | 'mem0' | 'both';
+    /** Use Reciprocal Rank Fusion for hybrid search merging (default: true) */
+    enableRRF: boolean;
+    /** Use FSRS spaced repetition for importance decay (default: true) */
+    enableFSRS: boolean;
+    /** Prepend contextual prefix to chunks before embedding (default: true) */
+    enableContextualPrefix: boolean;
+    /** Prioritize consolidation by importance * recency * surprise (default: true) */
+    enableBiasedReplay: boolean;
+    /** Use cross-encoder model for reranking (default: false, requires model download) */
+    enableCrossEncoderRerank: boolean;
+    /** Cluster episodic memories into semantic summaries (default: true) */
+    enableEpisodicConsolidation: boolean;
+    /** Embedding dimensions for Matryoshka truncation (default: 384 for backward compat) */
+    embeddingDimensions: number;
 }
 export declare const DEFAULT_CONFIG: SmartMemoryConfig;

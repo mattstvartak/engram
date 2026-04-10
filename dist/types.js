@@ -12,5 +12,12 @@ export const DEFAULT_CONFIG = {
     mem0ApiKey: '',
     mem0UserId: 'default',
     extractionProvider: 'local',
+    enableRRF: true,
+    enableFSRS: true,
+    enableContextualPrefix: true,
+    enableBiasedReplay: true,
+    enableCrossEncoderRerank: false,
+    enableEpisodicConsolidation: true,
+    embeddingDimensions: 384,
 };
 //# sourceMappingURL=types.js.map

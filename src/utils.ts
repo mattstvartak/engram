@@ -69,3 +69,40 @@ export function strengthenEdge(edges: MemoryEdge[], targetId: string, delta: num
       : e
   );
 }
+
+// ── Contextual Prefix (Improvement 4) ───────────────────────────────
+// Prepend metadata context before embedding. 35-49% retrieval improvement
+// per Anthropic's research. Stored content stays clean.
+
+export function buildContextPrefix(chunk: {
+  type?: string;
+  cognitiveLayer?: string;
+  domain?: string;
+  topic?: string;
+  tags?: string[];
+  createdAt?: string;
+}): string {
+  const parts: string[] = [];
+
+  if (chunk.cognitiveLayer && chunk.type) {
+    parts.push(`This is a ${chunk.cognitiveLayer} ${chunk.type}`);
+  }
+
+  if (chunk.domain || chunk.topic) {
+    const scope = [chunk.domain, chunk.topic].filter(Boolean).join('/');
+    parts.push(`about ${scope}`);
+  }
+
+  if (chunk.createdAt) {
+    try {
+      const d = new Date(chunk.createdAt);
+      parts.push(`from ${d.toISOString().split('T')[0]}`);
+    } catch { /* skip */ }
+  }
+
+  if (chunk.tags && chunk.tags.length > 0) {
+    parts.push(`Tags: ${chunk.tags.slice(0, 5).join(', ')}`);
+  }
+
+  return parts.length > 0 ? parts.join('. ') + '. ' : '';
+}

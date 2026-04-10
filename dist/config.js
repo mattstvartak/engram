@@ -23,6 +23,24 @@ export function loadConfig(overrides) {
     if (process.env.SMART_MEMORY_EXTRACTION_PROVIDER) {
         config.extractionProvider = process.env.SMART_MEMORY_EXTRACTION_PROVIDER;
     }
+    // v2 feature flags (env vars override defaults)
+    const envBool = (key, fallback) => {
+        const v = process.env[key];
+        if (v === 'true' || v === '1')
+            return true;
+        if (v === 'false' || v === '0')
+            return false;
+        return fallback;
+    };
+    config.enableRRF = envBool('SMART_MEMORY_ENABLE_RRF', config.enableRRF);
+    config.enableFSRS = envBool('SMART_MEMORY_ENABLE_FSRS', config.enableFSRS);
+    config.enableContextualPrefix = envBool('SMART_MEMORY_ENABLE_CONTEXTUAL_PREFIX', config.enableContextualPrefix);
+    config.enableBiasedReplay = envBool('SMART_MEMORY_ENABLE_BIASED_REPLAY', config.enableBiasedReplay);
+    config.enableCrossEncoderRerank = envBool('SMART_MEMORY_ENABLE_CROSS_ENCODER_RERANK', config.enableCrossEncoderRerank);
+    config.enableEpisodicConsolidation = envBool('SMART_MEMORY_ENABLE_EPISODIC_CONSOLIDATION', config.enableEpisodicConsolidation);
+    if (process.env.SMART_MEMORY_EMBEDDING_DIM) {
+        config.embeddingDimensions = parseInt(process.env.SMART_MEMORY_EMBEDDING_DIM, 10);
+    }
     return config;
 }
 //# sourceMappingURL=config.js.map

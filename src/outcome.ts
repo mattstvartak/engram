@@ -3,6 +3,7 @@ import type { StoredChunk } from './storage.js';
 import { Storage } from './storage.js';
 import { strengthenEdge } from './utils.js';
 import { reconsolidate } from './extractor.js';
+import { computeFSRSUpdate } from './consolidator.js';
 
 /**
  * Record the outcome of recalled memories for the feedback loop.
@@ -29,7 +30,10 @@ export async function recordRecallOutcome(
     else if (outcome === 'corrected') importance = Math.max(0.1, importance - 0.1);
     else if (outcome === 'irrelevant') importance = Math.max(0.1, importance - 0.05);
 
-    await storage.updateChunk(id, { recallOutcomes: outcomes, importance });
+    // FSRS stability update
+    const fsrsUpdate = config.enableFSRS ? computeFSRSUpdate(chunk, outcome) : {};
+
+    await storage.updateChunk(id, { recallOutcomes: outcomes, importance, ...fsrsUpdate });
 
     if (outcome === 'helpful') {
       for (const otherId of chunkIds) {

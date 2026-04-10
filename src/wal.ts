@@ -3,6 +3,7 @@ import type { SmartMemoryConfig, MemoryType, CognitiveLayer } from './types.js';
 import type { StoredChunk } from './storage.js';
 import { Storage } from './storage.js';
 import { embed } from './llm.js';
+import { buildContextPrefix } from './utils.js';
 
 /**
  * Write-Ahead Log (WAL) — real-time memory capture during conversations.
@@ -58,9 +59,23 @@ export async function ingest(
       recallOutcomes: [],
     };
 
-    // Generate embedding (best-effort — speed matters more for WAL)
+    // Detect temporal anchor from content dates
+    const dateMatch = chunk.content.match(/\b(\d{4})-(\d{2})-(\d{2})\b/) ??
+      chunk.content.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})[,.]?\s+(\d{4})\b/i);
+    if (dateMatch) {
+      try {
+        const parsed = new Date(dateMatch[0]);
+        if (!isNaN(parsed.getTime())) {
+          chunk.temporalAnchor = parsed.getTime();
+        }
+      } catch { /* skip */ }
+    }
+
+    // Generate embedding with contextual prefix (best-effort)
     try {
-      chunk.embedding = await embed(config, chunk.content);
+      const prefix = buildContextPrefix(chunk);
+      chunk.embedding = await embed(config, chunk.content, prefix);
+      chunk.embeddingVersion = 1;
     } catch {
       // Embeddings are optional for WAL
     }

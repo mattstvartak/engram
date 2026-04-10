@@ -4,4 +4,4 @@ export declare function llmComplete(_config: SmartMemoryConfig, systemPrompt: st
     maxTokens?: number;
     temperature?: number;
 }): Promise<string>;
-export declare function embed(_config: SmartMemoryConfig, text: string): Promise<number[]>;
+export declare function embed(config: SmartMemoryConfig, text: string, contextPrefix?: string): Promise<number[]>;

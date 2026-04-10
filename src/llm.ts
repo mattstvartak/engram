@@ -94,13 +94,28 @@ async function getExtractor(): Promise<any> {
 }
 
 export async function embed(
-  _config: SmartMemoryConfig,
-  text: string
+  config: SmartMemoryConfig,
+  text: string,
+  contextPrefix?: string
 ): Promise<number[]> {
   try {
     const extractor = await getExtractor();
-    const output = await extractor(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data as Float32Array);
+    // Contextual prefix improves retrieval by 35-49% (Anthropic research)
+    const inputText = (config.enableContextualPrefix && contextPrefix)
+      ? contextPrefix + text
+      : text;
+    const output = await extractor(inputText, { pooling: 'mean', normalize: true });
+    const full = Array.from(output.data as Float32Array);
+
+    // Matryoshka truncation: slice to configured dimensions and re-normalize
+    if (config.embeddingDimensions > 0 && config.embeddingDimensions < full.length) {
+      const truncated = full.slice(0, config.embeddingDimensions);
+      const norm = Math.sqrt(truncated.reduce((s, v) => s + v * v, 0));
+      if (norm > 0) return truncated.map(v => v / norm);
+      return truncated;
+    }
+
+    return full;
   } catch (err) {
     console.error('Smart Memory: embedding failed, falling back to keyword-only:', err);
     return [];

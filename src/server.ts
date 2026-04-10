@@ -289,7 +289,7 @@ server.registerTool(
   },
   async () => {
     const storage = await ensureStorage();
-    const stats = await consolidate(storage);
+    const stats = await consolidate(storage, config);
     return json({ action: 'consolidation', ...stats });
   }
 );

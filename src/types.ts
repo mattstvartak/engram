@@ -25,6 +25,16 @@ export interface MemoryChunk {
   lastRecalledAt: string | null;
   recallCount: number;
   embedding?: number[];
+  // FSRS fields (Improvement 3)
+  stability?: number;          // S in FSRS -- memory strength in days (default 1.0)
+  difficulty?: number;         // D in FSRS -- 0.0-1.0, retention difficulty (default 0.3)
+  // Temporal anchor (Improvement 2)
+  temporalAnchor?: number;     // Epoch ms of detected date in content
+  // Episodic consolidation (Improvement 8)
+  consolidationLevel?: number; // 0=raw, 1=episode summary, 2=principle
+  sourceChunkIds?: string[];   // For L1/L2, the chunks this was derived from
+  // Embedding version tracking (Improvement 6)
+  embeddingVersion?: number;   // 1=MiniLM-384, 2=nomic-256
 }
 
 // ── Memory Edges (Graph) ─────────────────────────────────────────────
@@ -120,6 +130,21 @@ export interface SmartMemoryConfig {
   mem0UserId: string;
   /** Extraction provider: 'local' or 'mem0' or 'both' (default: 'local') */
   extractionProvider: 'local' | 'mem0' | 'both';
+  // v2 feature flags
+  /** Use Reciprocal Rank Fusion for hybrid search merging (default: true) */
+  enableRRF: boolean;
+  /** Use FSRS spaced repetition for importance decay (default: true) */
+  enableFSRS: boolean;
+  /** Prepend contextual prefix to chunks before embedding (default: true) */
+  enableContextualPrefix: boolean;
+  /** Prioritize consolidation by importance * recency * surprise (default: true) */
+  enableBiasedReplay: boolean;
+  /** Use cross-encoder model for reranking (default: false, requires model download) */
+  enableCrossEncoderRerank: boolean;
+  /** Cluster episodic memories into semantic summaries (default: true) */
+  enableEpisodicConsolidation: boolean;
+  /** Embedding dimensions for Matryoshka truncation (default: 384 for backward compat) */
+  embeddingDimensions: number;
 }
 
 export const DEFAULT_CONFIG: SmartMemoryConfig = {
@@ -133,4 +158,11 @@ export const DEFAULT_CONFIG: SmartMemoryConfig = {
   mem0ApiKey: '',
   mem0UserId: 'default',
   extractionProvider: 'local',
+  enableRRF: true,
+  enableFSRS: true,
+  enableContextualPrefix: true,
+  enableBiasedReplay: true,
+  enableCrossEncoderRerank: false,
+  enableEpisodicConsolidation: true,
+  embeddingDimensions: 384,
 };
