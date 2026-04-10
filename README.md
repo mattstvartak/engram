@@ -264,6 +264,19 @@ The MCP server exposes 19 tools organized into four groups.
 | `memory_extract_rules` | Analyze a conversation for procedural rules |
 | `memory_mem0_sync` | Sync Mem0 cloud memories to local store |
 
+## Slash Commands
+
+These work in any MCP-compatible client (Claude Code, Cursor, OpenClaw, etc.). The MCP server advertises them in its instructions so the agent knows how to handle them. SKILL.md files are also included for platforms that discover skills from the filesystem.
+
+| Command | What it does |
+|---------|-------------|
+| `/memory-source <engram\|off\|hybrid>` | Switch memory backend. "engram" uses Engram exclusively, "off" disables all persistent memory, "hybrid" runs Engram alongside native client memory. |
+| `/recall <query>` | Search memories using the full hybrid pipeline (vector + keyword + temporal + KG + spreading activation). Results presented conversationally. |
+| `/forget <what>` | Find and remove or correct specific memories. Shows matches and confirms before acting. |
+| `/memory-health [maintain]` | Show memory system stats (tiers, layers, rules, KG size). With "maintain", runs the full consolidation cycle. |
+| `/knowledge <subcommand>` | Knowledge graph operations. Subcommands: `timeline <entity>`, `about <entity>`, `add <s> <p> <o>`, `correct <s> <p>`, `stats`. |
+| `/memory <subcommand>` | Quick ops. Subcommands: `save <content>`, `diary [date]`, `diary write <entry>`, `import <source>`, `rules`, `session [show\|clear]`. |
+
 ## Architecture
 
 ```
