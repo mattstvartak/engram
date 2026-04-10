@@ -191,7 +191,7 @@ openclaw plugins install engram
 | `SMART_MEMORY_DATA_DIR` | `~/.claude/smart-memory` | Where data gets stored |
 | `SMART_MEMORY_EMBEDDING_MODEL` | `Xenova/all-MiniLM-L6-v2` | HuggingFace model for embeddings |
 | `SMART_MEMORY_DEVICE` | `cpu` | Embedding device: `cpu`, `dml` (DirectML), or `cuda` |
-| `SMART_MEMORY_MODEL` | `anthropic/claude-haiku-4-5-20251001` | OpenRouter model ID for LLM features (any model on openrouter.ai works) |
+| `SMART_MEMORY_MODEL` | `anthropic/claude-haiku-4.5` | OpenRouter model ID for LLM features. Only used when `OPENROUTER_API_KEY` is set. Any model on [openrouter.ai](https://openrouter.ai) works. |
 
 ### Plugin Config (OpenClaw)
 
