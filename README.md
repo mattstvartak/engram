@@ -9,7 +9,7 @@ The core idea is that memory shouldn't just be "find similar text." When someone
 - [Benchmark Results](#benchmark-results)
 - [How It Works](#how-it-works)
 - [Compatibility](#compatibility)
-- [Installation](#installation)
+- [Installation](#installation) (Claude Code, Claude Desktop, Cursor/Windsurf/Cline, Source, OpenClaw)
 - [Configuration](#configuration)
 - [Tools](#tools)
 - [Slash Commands](#slash-commands)
@@ -166,16 +166,46 @@ If your tool can connect to an MCP server over stdio, Engram will work with it.
 
 ## Installation
 
-### As an MCP Server
+### Claude Code (plugin marketplace)
 
-Add to your MCP client config:
+```
+/plugin marketplace add mattstvartak/onenomad-plugins
+/plugin install engram@onenomad-plugins
+```
+
+### Claude Code (direct)
+
+```bash
+claude mcp add engram -- npx @onenomad/engram-memory
+```
+
+### Claude Desktop
+
+Add to your Claude Desktop config file. On macOS it's at `~/Library/Application Support/Claude/claude_desktop_config.json`, on Windows at `%APPDATA%\Claude\claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "engram": {
-      "command": "node",
-      "args": ["/path/to/engram/dist/server.js"]
+      "command": "npx",
+      "args": ["@onenomad/engram-memory"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop after saving.
+
+### Any MCP Client (Cursor, Windsurf, Cline, etc.)
+
+Add to your client's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "npx",
+      "args": ["@onenomad/engram-memory"]
     }
   }
 }
@@ -188,6 +218,19 @@ git clone https://github.com/mattstvartak/engram.git
 cd engram
 npm install
 npm run build
+```
+
+Then point your MCP client at `dist/server.js`:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "node",
+      "args": ["/path/to/engram/dist/server.js"]
+    }
+  }
+}
 ```
 
 ### As an OpenClaw Plugin
