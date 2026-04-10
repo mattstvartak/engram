@@ -95,6 +95,16 @@ const server = new McpServer(
       'Use memory_ingest to immediately save important facts, preferences, decisions, or corrections -- write before responding (WAL principle).',
       'Use memory_kg_add to record entity relationships (e.g. "Matt works-at Acme", "project uses TypeScript").',
       'Use memory_diary_write at the end of significant sessions to record what happened.',
+      '',
+      'SLASH COMMANDS (user-invocable):',
+      'These commands work as /command in any compatible client. When the user types one, follow the instructions below.',
+      '',
+      '/memory-source <engram|off|hybrid> -- Switch memory backend. "engram" = exclusive Engram MCP, "off" = no persistent memory, "hybrid" = Engram + native client memory (default).',
+      '/recall <query> -- Search memories using the full hybrid pipeline. Present results conversationally, not as raw data.',
+      '/forget <what> -- Find and remove or correct specific memories. Always confirm with user before acting. Use memory_outcome with "irrelevant" to demote, memory_kg_invalidate for wrong facts.',
+      '/memory-health [maintain] -- Show memory stats (tiers, layers, rules, KG size). With "maintain" arg, run the consolidation cycle.',
+      '/knowledge <subcommand> -- Knowledge graph operations: "timeline <entity>", "about <entity>", "add <s> <p> <o>", "correct <s> <p>", "stats".',
+      '/memory <subcommand> -- Quick ops: "save <content>", "diary [date]", "diary write <entry>", "import <source>", "rules", "session [show|clear]".',
     ].join('\n'),
   }
 );
