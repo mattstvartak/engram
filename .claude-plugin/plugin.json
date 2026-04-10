@@ -1,0 +1,13 @@
+{
+  "name": "engram",
+  "description": "Persistent memory for AI agents. Hybrid ANN search, spreading activation, temporal inference, knowledge graph, procedural rules, and tier lifecycle. Remembers facts, preferences, decisions, and corrections across sessions.",
+  "version": "1.0.0-beta.1",
+  "author": {
+    "name": "Matt Stvartak",
+    "email": "matt@onenomad.dev"
+  },
+  "homepage": "https://github.com/mattstvartak/engram",
+  "repository": "https://github.com/mattstvartak/engram",
+  "license": "BUSL-1.1",
+  "keywords": ["memory", "ai", "mcp", "vector-search", "knowledge-graph", "recall"]
+}

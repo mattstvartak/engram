@@ -2,14 +2,11 @@
   "mcpServers": {
     "smart-memory": {
       "command": "node",
-      "args": ["C:\\Users\\matts\\development\\openclaw\\openclaw-smart-memory-plugin\\dist\\server.js"],
+      "args": ["{pluginDir}/dist/server.js"],
       "env": {
-        "SMART_MEMORY_DEVICE": "dml"
+        "OPENROUTER_API_KEY": "",
+        "SMART_MEMORY_MODEL": "anthropic/claude-haiku-4.5"
       }
-    },
-    "persona": {
-      "command": "node",
-      "args": ["C:\\Users\\matts\\development\\openclaw\\openclaw-persona-plugin\\dist\\server.js"]
     }
   }
 }
