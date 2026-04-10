@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "smart-memory": {
+    "engram": {
       "command": "node",
       "args": ["{pluginDir}/dist/server.js"],
       "env": {
