@@ -6,7 +6,7 @@ import type { SmartMemoryConfig } from './types.js';
  *
  * Completions: OpenRouter API (OpenAI-compatible) with OPENROUTER_API_KEY.
  *   Users can select any model available on openrouter.ai.
- *   Default model: google/gemini-2.0-flash-001 (fast, cheap).
+ *   Default model: anthropic/claude-haiku-4-5-20251001 (fast, cheap).
  *   Override with SMART_MEMORY_MODEL env var.
  *
  * Embeddings: Local ONNX model via @huggingface/transformers.
@@ -52,7 +52,7 @@ export async function llmComplete(
     );
   }
 
-  const model = process.env.SMART_MEMORY_MODEL ?? 'google/gemini-2.0-flash-001';
+  const model = process.env.SMART_MEMORY_MODEL ?? 'anthropic/claude-haiku-4-5-20251001';
   const response = await client.chat.completions.create({
     model,
     max_tokens: opts?.maxTokens ?? 1000,
