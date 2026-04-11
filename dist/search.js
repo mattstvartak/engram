@@ -23,14 +23,19 @@ export async function search(config, storage, query, maxResults, filters) {
     // ── Native ANN vector search via LanceDB ───────────────────────────
     let queryEmbedding = null;
     try {
-        queryEmbedding = await embed(config, query);
+        // Build the same contextual prefix used at ingest time so query and
+        // stored embeddings live in the same vector space.
+        const queryPrefix = config.enableContextualPrefix
+            ? 'search query: '
+            : undefined;
+        queryEmbedding = await embed(config, query, queryPrefix);
     }
     catch {
         // Fall back to keyword-only
     }
     if (queryEmbedding && queryEmbedding.length > 0) {
         const vectorResults = await storage.vectorSearch(queryEmbedding, Math.min(limit * 5, 50), // Larger candidate pool
-        "tier != 'archive'");
+        "tier != 'archive' AND consolidation_level != -1");
         for (const { chunk, distance } of vectorResults) {
             const similarity = 1 - distance;
             if (similarity > 0.25) {
@@ -57,6 +62,33 @@ export async function search(config, storage, query, maxResults, filters) {
                 const keywordScore = weightedMatches / totalIdfWeight;
                 keywordScored.set(chunk.id, { chunk, score: keywordScore });
             }
+        }
+    }
+    // ── Propagate parent keyword hits to sub-chunks ────────────────────
+    // Parent chunks (consolidationLevel=-1) have no embedding but contain
+    // all keywords. When a parent matches, give its sub-chunks the score.
+    const parentHits = new Map();
+    for (const [id, entry] of keywordScored) {
+        if (entry.chunk.consolidationLevel === -1) {
+            parentHits.set(id, { score: entry.score });
+        }
+    }
+    if (parentHits.size > 0) {
+        for (const chunk of allChunks) {
+            if (chunk.parentChunkId && parentHits.has(chunk.parentChunkId)) {
+                const parentScore = parentHits.get(chunk.parentChunkId).score;
+                const existing = keywordScored.get(chunk.id);
+                if (existing) {
+                    existing.score = Math.max(existing.score, parentScore);
+                }
+                else {
+                    keywordScored.set(chunk.id, { chunk, score: parentScore });
+                }
+            }
+        }
+        // Remove parent entries from keyword results
+        for (const id of parentHits.keys()) {
+            keywordScored.delete(id);
         }
     }
     // ── Merge vector + keyword scores ─────────────────────────────────
@@ -89,11 +121,13 @@ export async function search(config, storage, query, maxResults, filters) {
                 rrfScores.set(id, { chunk: entry.chunk, score: rrfScore });
             }
         }
-        // Normalize RRF scores to [0,1] so bonus factors stay proportional
-        const maxRRF = Math.max(...Array.from(rrfScores.values()).map(e => e.score), 0.001);
+        // Replace scored map with raw RRF scores (no normalization).
+        // Bonus factors downstream are additive and small (~0.1-0.4).
+        // RRF scores are already in a comparable range (max ~0.033 for k=60),
+        // so normalizing to [0,1] would make bonuses disproportionately large.
         scored.clear();
         for (const [id, entry] of rrfScores) {
-            scored.set(id, { chunk: entry.chunk, score: entry.score / maxRRF });
+            scored.set(id, { chunk: entry.chunk, score: entry.score });
         }
     }
     else {
@@ -114,28 +148,31 @@ export async function search(config, storage, query, maxResults, filters) {
         }
     }
     // ── Bonus factors ──────────────────────────────────────────────────
+    // When RRF is enabled, raw scores are ~0.003-0.033 so bonuses must be
+    // in the same magnitude. Scale factor keeps bonuses proportional.
+    const bonusScale = config.enableRRF ? 0.1 : 1.0;
     const now = Date.now();
     for (const [, entry] of scored) {
         const c = entry.chunk;
         const ageDays = (now - new Date(c.createdAt).getTime()) / 86_400_000;
         // Base bonuses
-        entry.score += Math.max(0, 0.1 * (1 - ageDays / 30)); // Recency
-        entry.score += Math.min(0.05, c.recallCount * 0.01); // Frequency
-        entry.score += c.tier === 'long-term' ? 0.05 : 0; // Tier bonus
-        entry.score += c.importance * 0.1; // Importance (0-0.1)
+        entry.score += Math.max(0, 0.1 * (1 - ageDays / 30)) * bonusScale; // Recency
+        entry.score += Math.min(0.05, c.recallCount * 0.01) * bonusScale; // Frequency
+        entry.score += (c.tier === 'long-term' ? 0.05 : 0) * bonusScale; // Tier bonus
+        entry.score += c.importance * 0.1 * bonusScale; // Importance
         if (c.cognitiveLayer === 'procedural')
-            entry.score += 0.05; // Procedural boost
+            entry.score += 0.05 * bonusScale; // Procedural boost
         // ── Temporal proximity boost (up to +0.4) ────────────────────
         if (querySignals.dates.length > 0) {
-            entry.score += temporalBoost(c, querySignals.dates);
+            entry.score += temporalBoost(c, querySignals.dates) * bonusScale;
         }
         // ── Entity / proper noun boost (up to +0.5) ─────────────────
         if (querySignals.entities.length > 0) {
-            entry.score += entityBoost(c, querySignals.entities);
+            entry.score += entityBoost(c, querySignals.entities) * bonusScale;
         }
         // ── Quoted phrase boost (up to +0.6) ─────────────────────────
         if (querySignals.phrases.length > 0) {
-            entry.score += phraseBoost(c, querySignals.phrases);
+            entry.score += phraseBoost(c, querySignals.phrases) * bonusScale;
         }
     }
     // ── Time-window retrieval (temporal inference) ─────────────────────
@@ -155,7 +192,7 @@ export async function search(config, storage, query, maxResults, filters) {
                     const center = (win.start + win.end) / 2;
                     const halfSpan = (win.end - win.start) / 2;
                     const proximity = 1 - Math.abs(chunkTime - center) / halfSpan;
-                    const windowScore = 0.3 + proximity * 0.2; // 0.3 - 0.5
+                    const windowScore = (0.3 + proximity * 0.2) * bonusScale; // scaled for RRF
                     scored.set(chunk.id, { chunk, score: windowScore });
                     break;
                 }
@@ -205,7 +242,7 @@ export async function search(config, storage, query, maxResults, filters) {
                             kgMatches++;
                     }
                     if (kgMatches > 0) {
-                        entry.score += Math.min(0.3, kgMatches * 0.1);
+                        entry.score += Math.min(0.3, kgMatches * 0.1) * bonusScale;
                     }
                 }
             }

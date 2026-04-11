@@ -32,6 +32,8 @@ import { embed, isLlmAvailable } from '../src/llm.js';
 import { search, selectRelevant } from '../src/search.js';
 import type { SmartMemoryConfig, SearchResult } from '../src/types.js';
 import type { StoredChunk } from '../src/storage.js';
+import { buildContextPrefix } from '../src/utils.js';
+import { chunkContent } from '../src/chunker.js';
 import { randomUUID } from 'node:crypto';
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -204,35 +206,85 @@ async function main(): Promise<void> {
     for (const session of sessions) {
       if (session.text.length < 10) continue;
 
-      const chunkId = randomUUID();
-      sessionChunkMap.set(chunkId, { chunkId, dialogIds: session.dialogIds });
-
-      let embedding: number[] | undefined;
-      try {
-        embedding = await embed(config, session.text.slice(0, 2000));
-      } catch { /* noop */ }
-
-      const chunk: StoredChunk = {
-        id: chunkId,
-        tier: 'long-term',
-        content: session.text,
-        type: 'context',
-        cognitiveLayer: 'episodic',
-        tags: [],
+      const baseMeta = {
+        tier: 'long-term' as const,
+        type: 'context' as const,
+        cognitiveLayer: 'episodic' as const,
+        tags: [] as string[],
         domain: '',
         topic: '',
         source: session.sessionKey,
         importance: 0.5,
-        sentiment: 'neutral',
+        sentiment: 'neutral' as const,
         createdAt: session.dateTime,
         lastRecalledAt: null,
         recallCount: 0,
-        embedding,
         relatedMemories: [],
         recallOutcomes: [],
       };
 
-      await storage.saveChunk(chunk);
+      const splitResult = chunkContent(session.text);
+
+      if (splitResult.needsSplit) {
+        // Parent chunk (no embedding, keyword search only)
+        const parentId = randomUUID();
+        const parentChunk: StoredChunk = {
+          id: parentId,
+          ...baseMeta,
+          content: session.text,
+          consolidationLevel: -1,
+        };
+        await storage.saveChunk(parentChunk);
+        // Map parent to dialog IDs (for keyword hit propagation)
+        sessionChunkMap.set(parentId, { chunkId: parentId, dialogIds: session.dialogIds });
+
+        // Sub-chunks with embeddings
+        for (const subText of splitResult.chunks) {
+          const subId = randomUUID();
+          sessionChunkMap.set(subId, { chunkId: subId, dialogIds: session.dialogIds });
+
+          let embedding: number[] | undefined;
+          try {
+            const prefix = buildContextPrefix({
+              type: 'context',
+              cognitiveLayer: 'episodic',
+              createdAt: session.dateTime,
+            });
+            embedding = await embed(config, subText.slice(0, 2000), prefix);
+          } catch { /* noop */ }
+
+          const subChunk: StoredChunk = {
+            id: subId,
+            ...baseMeta,
+            content: subText,
+            parentChunkId: parentId,
+            embedding,
+          };
+          await storage.saveChunk(subChunk);
+        }
+      } else {
+        // Single chunk (original path)
+        const chunkId = randomUUID();
+        sessionChunkMap.set(chunkId, { chunkId, dialogIds: session.dialogIds });
+
+        let embedding: number[] | undefined;
+        try {
+          const prefix = buildContextPrefix({
+            type: 'context',
+            cognitiveLayer: 'episodic',
+            createdAt: session.dateTime,
+          });
+          embedding = await embed(config, session.text.slice(0, 2000), prefix);
+        } catch { /* noop */ }
+
+        const chunk: StoredChunk = {
+          id: chunkId,
+          ...baseMeta,
+          content: session.text,
+          embedding,
+        };
+        await storage.saveChunk(chunk);
+      }
     }
 
     // Run QA pairs

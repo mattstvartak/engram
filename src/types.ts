@@ -35,6 +35,8 @@ export interface MemoryChunk {
   sourceChunkIds?: string[];   // For L1/L2, the chunks this was derived from
   // Embedding version tracking (Improvement 6)
   embeddingVersion?: number;   // 1=MiniLM-384, 2=nomic-256
+  // Sub-session chunking
+  parentChunkId?: string;      // For sub-chunks, the parent chunk ID
 }
 
 // ── Memory Edges (Graph) ─────────────────────────────────────────────
@@ -145,6 +147,8 @@ export interface SmartMemoryConfig {
   enableEpisodicConsolidation: boolean;
   /** Embedding dimensions for Matryoshka truncation (default: 384 for backward compat) */
   embeddingDimensions: number;
+  /** Split long content into focused sub-chunks at ingest time (default: true) */
+  enableChunking: boolean;
 }
 
 export const DEFAULT_CONFIG: SmartMemoryConfig = {
@@ -165,4 +169,5 @@ export const DEFAULT_CONFIG: SmartMemoryConfig = {
   enableCrossEncoderRerank: false,
   enableEpisodicConsolidation: true,
   embeddingDimensions: 384,
+  enableChunking: true,
 };

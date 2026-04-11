@@ -46,7 +46,7 @@ async function getReranker(): Promise<any> {
 export async function rerank(
   query: string,
   documents: string[],
-  topK: number = 5
+  topK: number = 10
 ): Promise<RerankResult[]> {
   const reranker = await getReranker();
 

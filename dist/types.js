@@ -19,5 +19,6 @@ export const DEFAULT_CONFIG = {
     enableCrossEncoderRerank: false,
     enableEpisodicConsolidation: true,
     embeddingDimensions: 384,
+    enableChunking: true,
 };
 //# sourceMappingURL=types.js.map

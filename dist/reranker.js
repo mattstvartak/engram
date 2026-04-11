@@ -20,7 +20,7 @@ async function getReranker() {
  * Rerank documents against a query using a cross-encoder.
  * Returns sorted results with scores, highest first.
  */
-export async function rerank(query, documents, topK = 5) {
+export async function rerank(query, documents, topK = 10) {
     const reranker = await getReranker();
     const results = [];
     // Score each (query, document) pair

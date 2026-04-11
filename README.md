@@ -1,6 +1,6 @@
 # Engram
 
-A memory system for AI agents that actually works. LLMs can't remember anything between conversations by default, and the existing solutions are either too simple (just dump everything in a vector DB) or too expensive (send your entire history to an API every time). Engram sits in the middle. It runs locally, doesn't need an API key for basic operation, and scores 93.2% recall on the LoCoMo benchmark. That beats every open-source memory system I've tested against.
+A memory system for AI agents that actually works. LLMs can't remember anything between conversations by default, and the existing solutions are either too simple (just dump everything in a vector DB) or too expensive (send your entire history to an API every time). Engram sits in the middle. It runs locally, doesn't need an API key for basic operation, and scores 92.0% recall on the LoCoMo benchmark. That beats every open-source memory system I've tested against.
 
 The core idea is that memory shouldn't just be "find similar text." When someone asks "where was I working last March?" the system needs to actually reason about time, not just pattern match on the word "March." So the search pipeline combines vector similarity, keyword matching with IDF weighting, temporal inference, a knowledge graph, and spreading activation over a memory graph. Each piece handles a different kind of recall that the others miss.
 
@@ -26,21 +26,23 @@ Tested against the [LoCoMo benchmark](https://github.com/snap-research/locomo) (
 
 ```
 Per-category:
-  adversarial               R@5= 89.7%  R@10= 94.6%
-  open-domain               R@5= 90.2%  R@10= 95.2%
-  single-hop                R@5= 79.8%  R@10= 92.2%
-  temporal                  R@5= 84.1%  R@10= 92.2%
-  temporal-inference         R@5= 66.7%  R@10= 74.0%
+  adversarial               R@5= 89.7%  R@10= 95.1%
+  open-domain               R@5= 88.8%  R@10= 94.3%
+  single-hop                R@5= 78.0%  R@10= 86.9%
+  temporal                  R@5= 82.6%  R@10= 91.6%
+  temporal-inference        R@5= 61.5%  R@10= 74.0%
 
-  OVERALL                   R@5=86.5%   R@10=93.2%
+  OVERALL                   R@5=85.1%   R@10=92.0%
   Embedding model           Xenova/all-MiniLM-L6-v2 (23MB, runs on CPU)
 ```
+
+For details on recent benchmark optimization work including regression fixes, sub-session chunking, and reranking analysis, see [docs/benchmark-optimization.md](docs/benchmark-optimization.md).
 
 For reference, here's how that stacks up against other memory systems on LoCoMo:
 
 | System | Score | Metric | Requires API | Notes |
 |--------|-------|--------|-------------|-------|
-| **Engram** | **93.2%** | **R@10** | **No** | **Local embeddings, no rerank** |
+| **Engram** | **92.0%** | **R@10** | **No** | **Local embeddings, sub-session chunking, no rerank** |
 | MemMachine v0.2 | 91.7% | LLM-judge | Yes | GPT-4.1-mini for extraction + judge |
 | Backboard | 90.1% | LLM-judge | Yes | GPT-4.1 judge |
 | MemPalace hybrid v5 | 88.9% | R@10 | No | Most direct comparison, same metric |
@@ -53,7 +55,7 @@ For reference, here's how that stacks up against other memory systems on LoCoMo:
 
 A couple things worth noting about this table. Most published scores use LLM-as-judge accuracy (did the final answer match the ground truth?), which is a different metric than R@10 retrieval recall (is the right memory in the top 10 candidates?). So not every row is a direct apples-to-apples comparison. The closest one is MemPalace at 88.9% R@10 using the same methodology and dataset.
 
-The other thing that stands out is the API column. Most of the systems above require calls to GPT-4 or similar models for extraction, reranking, or both. Engram hits 93.2% using a 23MB local embedding model on CPU with zero API calls during retrieval. Adding LLM reranking on top of that should push the score higher.
+The other thing that stands out is the API column. Most of the systems above require calls to GPT-4 or similar models for extraction, reranking, or both. Engram hits 92.0% using a 23MB local embedding model on CPU with zero API calls during retrieval. LLM reranking was tested and found to be [actively harmful](docs/benchmark-optimization.md#llm-reranking-analysis) for this pipeline.
 
 ## How It Works
 

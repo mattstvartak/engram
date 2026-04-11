@@ -4,6 +4,7 @@ import type { StoredChunk } from './storage.js';
 import { Storage } from './storage.js';
 import { embed } from './llm.js';
 import { buildContextPrefix } from './utils.js';
+import { chunkContent } from './chunker.js';
 
 /**
  * Write-Ahead Log (WAL) — real-time memory capture during conversations.
@@ -40,18 +41,19 @@ export async function ingest(
   for (const entry of entries) {
     if (!entry.content || entry.content.trim().length < 5) continue;
 
-    const chunk: StoredChunk = {
-      id: randomUUID(),
-      tier: 'short-term',
-      content: entry.content.trim(),
-      type: entry.type ?? inferType(entry.content),
-      cognitiveLayer: entry.layer ?? inferLayer(entry.content),
+    const trimmedContent = entry.content.trim();
+    const baseType = entry.type ?? inferType(trimmedContent);
+    const baseLayer = entry.layer ?? inferLayer(trimmedContent);
+    const baseMeta = {
+      tier: 'short-term' as const,
+      type: baseType,
+      cognitiveLayer: baseLayer,
       tags: entry.tags ?? [],
       domain: entry.domain ?? '',
       topic: entry.topic ?? '',
       source: entry.source ?? `wal:${Date.now()}`,
       importance: entry.importance ?? 0.5,
-      sentiment: 'neutral',
+      sentiment: 'neutral' as const,
       createdAt: new Date().toISOString(),
       lastRecalledAt: null,
       recallCount: 0,
@@ -59,29 +61,74 @@ export async function ingest(
       recallOutcomes: [],
     };
 
-    // Detect temporal anchor from content dates
-    const dateMatch = chunk.content.match(/\b(\d{4})-(\d{2})-(\d{2})\b/) ??
-      chunk.content.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})[,.]?\s+(\d{4})\b/i);
-    if (dateMatch) {
-      try {
-        const parsed = new Date(dateMatch[0]);
-        if (!isNaN(parsed.getTime())) {
-          chunk.temporalAnchor = parsed.getTime();
+    // Check if content should be split into sub-chunks
+    const splitResult = config.enableChunking ? chunkContent(trimmedContent) : { chunks: [trimmedContent], needsSplit: false };
+
+    if (splitResult.needsSplit) {
+      // Save parent chunk (no embedding, used for keyword search)
+      const parentChunk: StoredChunk = {
+        id: randomUUID(),
+        ...baseMeta,
+        content: trimmedContent,
+        consolidationLevel: -1, // Sentinel: parent container
+      };
+      await storage.saveChunk(parentChunk);
+      chunks.push(parentChunk);
+
+      // Save sub-chunks with embeddings
+      for (const subContent of splitResult.chunks) {
+        const subChunk: StoredChunk = {
+          id: randomUUID(),
+          ...baseMeta,
+          content: subContent,
+          parentChunkId: parentChunk.id,
+        };
+
+        // Detect temporal anchor
+        const dateMatch = subContent.match(/\b(\d{4})-(\d{2})-(\d{2})\b/) ??
+          subContent.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})[,.]?\s+(\d{4})\b/i);
+        if (dateMatch) {
+          try {
+            const parsed = new Date(dateMatch[0]);
+            if (!isNaN(parsed.getTime())) subChunk.temporalAnchor = parsed.getTime();
+          } catch { /* skip */ }
         }
+
+        try {
+          const prefix = buildContextPrefix(subChunk);
+          subChunk.embedding = await embed(config, subContent, prefix);
+          subChunk.embeddingVersion = 1;
+        } catch { /* skip */ }
+
+        await storage.saveChunk(subChunk);
+        chunks.push(subChunk);
+      }
+    } else {
+      // Single chunk path (original behavior)
+      const chunk: StoredChunk = {
+        id: randomUUID(),
+        ...baseMeta,
+        content: trimmedContent,
+      };
+
+      const dateMatch = chunk.content.match(/\b(\d{4})-(\d{2})-(\d{2})\b/) ??
+        chunk.content.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})[,.]?\s+(\d{4})\b/i);
+      if (dateMatch) {
+        try {
+          const parsed = new Date(dateMatch[0]);
+          if (!isNaN(parsed.getTime())) chunk.temporalAnchor = parsed.getTime();
+        } catch { /* skip */ }
+      }
+
+      try {
+        const prefix = buildContextPrefix(chunk);
+        chunk.embedding = await embed(config, chunk.content, prefix);
+        chunk.embeddingVersion = 1;
       } catch { /* skip */ }
-    }
 
-    // Generate embedding with contextual prefix (best-effort)
-    try {
-      const prefix = buildContextPrefix(chunk);
-      chunk.embedding = await embed(config, chunk.content, prefix);
-      chunk.embeddingVersion = 1;
-    } catch {
-      // Embeddings are optional for WAL
+      await storage.saveChunk(chunk);
+      chunks.push(chunk);
     }
-
-    await storage.saveChunk(chunk);
-    chunks.push(chunk);
   }
 
   // Log to daily entries

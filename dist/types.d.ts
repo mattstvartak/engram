@@ -24,6 +24,7 @@ export interface MemoryChunk {
     consolidationLevel?: number;
     sourceChunkIds?: string[];
     embeddingVersion?: number;
+    parentChunkId?: string;
 }
 export interface MemoryEdge {
     targetId: string;
@@ -109,5 +110,7 @@ export interface SmartMemoryConfig {
     enableEpisodicConsolidation: boolean;
     /** Embedding dimensions for Matryoshka truncation (default: 384 for backward compat) */
     embeddingDimensions: number;
+    /** Split long content into focused sub-chunks at ingest time (default: true) */
+    enableChunking: boolean;
 }
 export declare const DEFAULT_CONFIG: SmartMemoryConfig;

@@ -62,6 +62,13 @@ export class Storage {
         embedding: new Array(384).fill(0),
         related_memories: '[]',
         recall_outcomes: '[]',
+        stability: 1.0,
+        difficulty: 0.3,
+        temporal_anchor: 0,
+        consolidation_level: 0,
+        source_chunk_ids: '[]',
+        embedding_version: 1,
+        parent_chunk_id: '',
       }]);
       await this.chunks.delete('id = \'__init__\'');
     }
@@ -145,6 +152,13 @@ export class Storage {
       embedding: chunk.embedding ?? new Array(384).fill(0),
       related_memories: JSON.stringify(chunk.relatedMemories),
       recall_outcomes: JSON.stringify(chunk.recallOutcomes),
+      stability: chunk.stability ?? 1.0,
+      difficulty: chunk.difficulty ?? 0.3,
+      temporal_anchor: chunk.temporalAnchor ?? 0,
+      consolidation_level: chunk.consolidationLevel ?? 0,
+      source_chunk_ids: JSON.stringify(chunk.sourceChunkIds ?? []),
+      embedding_version: chunk.embeddingVersion ?? 1,
+      parent_chunk_id: chunk.parentChunkId ?? '',
     }]);
   }
 
@@ -216,6 +230,7 @@ export class Storage {
     if (updates.consolidationLevel !== undefined) values.consolidation_level = updates.consolidationLevel;
     if (updates.sourceChunkIds !== undefined) values.source_chunk_ids = JSON.stringify(updates.sourceChunkIds);
     if (updates.embeddingVersion !== undefined) values.embedding_version = updates.embeddingVersion;
+    if (updates.parentChunkId !== undefined) values.parent_chunk_id = updates.parentChunkId;
 
     if (Object.keys(values).length === 0) return;
     await this.chunks.update({ where: `id = '${esc(id)}'`, values });
@@ -452,6 +467,7 @@ function rowToChunk(row: any): StoredChunk {
     consolidationLevel: row.consolidation_level ?? 0,
     sourceChunkIds: row.source_chunk_ids ? JSON.parse(row.source_chunk_ids) : undefined,
     embeddingVersion: row.embedding_version ?? 1,
+    parentChunkId: row.parent_chunk_id || undefined,
   };
 }
 

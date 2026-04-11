@@ -49,6 +49,7 @@ export function loadConfig(overrides?: Partial<SmartMemoryConfig>): SmartMemoryC
   config.enableBiasedReplay = envBool('ENGRAM_ENABLE_BIASED_REPLAY', 'SMART_MEMORY_ENABLE_BIASED_REPLAY', config.enableBiasedReplay);
   config.enableCrossEncoderRerank = envBool('ENGRAM_ENABLE_CROSS_ENCODER_RERANK', 'SMART_MEMORY_ENABLE_CROSS_ENCODER_RERANK', config.enableCrossEncoderRerank);
   config.enableEpisodicConsolidation = envBool('ENGRAM_ENABLE_EPISODIC_CONSOLIDATION', 'SMART_MEMORY_ENABLE_EPISODIC_CONSOLIDATION', config.enableEpisodicConsolidation);
+  config.enableChunking = envBool('ENGRAM_ENABLE_CHUNKING', 'SMART_MEMORY_ENABLE_CHUNKING', config.enableChunking);
 
   const embeddingDim = env('ENGRAM_EMBEDDING_DIM', 'SMART_MEMORY_EMBEDDING_DIM');
   if (embeddingDim) {
