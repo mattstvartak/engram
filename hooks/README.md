@@ -22,12 +22,22 @@ Add to your Claude Code settings (global `~/.claude/settings.json` or per-projec
   "hooks": {
     "Stop": [
       {
-        "command": "bash /path/to/engram/hooks/engram_stop_hook.sh"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /path/to/engram/hooks/engram_stop_hook.sh"
+          }
+        ]
       }
     ],
     "PreCompact": [
       {
-        "command": "bash /path/to/engram/hooks/engram_precompact_hook.sh"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /path/to/engram/hooks/engram_precompact_hook.sh"
+          }
+        ]
       }
     ]
   }
