@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { embed } from './llm.js';
 import { buildContextPrefix } from './utils.js';
 import { chunkContent } from './chunker.js';
+import { extractAndPersistTriples } from './kg-extractor.js';
 /**
  * Immediately persist one or more memory entries.
  * Designed to be called mid-conversation, before the agent responds.
@@ -107,6 +108,21 @@ export async function ingest(config, storage, entries) {
             summary: `WAL ingest: ${chunks.length} entries`,
             extractedFacts: chunks.map(c => c.content),
         });
+        // Auto-populate knowledge graph from ingested content
+        for (const chunk of chunks) {
+            if (chunk.consolidationLevel === -1)
+                continue; // skip parent containers
+            try {
+                await extractAndPersistTriples(storage, chunk.content, {
+                    domain: chunk.domain,
+                    topic: chunk.topic,
+                    source: chunk.source,
+                });
+            }
+            catch {
+                // KG extraction is best-effort — never block ingestion
+            }
+        }
     }
     return chunks;
 }
