@@ -33,23 +33,20 @@ function json(data) { return text(JSON.stringify(data, null, 2)); }
 // ── MCP Server ──────────────────────────────────────────────────────
 const server = new McpServer({ name: 'engram', version: '2.0.0' }, {
     instructions: [
-        'Engram: persistent memory with hybrid vector search, knowledge graph, and agent diary.',
+        'Engram is your long-term memory. Everything you learn about the user, their projects, and their preferences lives here.',
         '',
-        'PROACTIVE STORAGE (critical): IMMEDIATELY store user facts, preferences, decisions, corrections, and project context via memory_ingest/memory_kg_add BEFORE responding. Also store concise summaries of substantive answers and research. Skip trivial exchanges.',
+        'YOUR JOB: Save what matters. When the user tells you something about themselves, their work, or makes a decision — write it down immediately with memory_ingest. Don\'t wait. Don\'t batch. Save it now, before you forget.',
         '',
-        'PROACTIVE RECALL: Before answering about prior work, decisions, preferences, or people, use memory_search first.',
+        'THREE TOOLS YOU SHOULD USE CONSTANTLY:',
+        '• memory_ingest — Save a fact, preference, decision, or context. Just pass content — everything else is optional.',
+        '• memory_kg_add — Record a relationship between things (e.g., "Matt works-on lulld").',
+        '• memory_diary_write — At the end of a session, write what happened in your own words.',
         '',
-        'PERSONA INTEGRATION: If persona MCP is available, proactively call persona_signal on user reactions (correction, approval, frustration, elaboration, simplification, code_accepted, code_rejected, explicit_feedback, style_correction, praise). Include content and category. Call persona_context at start of complex interactions; persona_synthesize every 5-10 exchanges.',
+        'BEFORE ANSWERING about anything from a prior conversation: call memory_search first. Your training data doesn\'t remember — Engram does.',
         '',
-        'KEY TOOLS: memory_ingest (save facts/prefs/decisions, WAL principle), memory_kg_add (entity relationships), memory_diary_write (session summaries).',
+        'PERSONA INTEGRATION: If persona MCP is available, proactively call persona_signal on user reactions (correction, approval, frustration, elaboration, simplification, code_accepted, code_rejected, explicit_feedback, style_correction, praise).',
         '',
-        'SLASH COMMANDS:',
-        '/memory-source <engram|off|hybrid> -- Switch backend.',
-        '/recall <query> -- Search memories conversationally.',
-        '/forget <what> -- Remove/correct memories (confirm first).',
-        '/memory-health [maintain] -- Stats or run consolidation.',
-        '/knowledge <subcommand> -- KG ops: timeline, about, add, correct, stats.',
-        '/memory <subcommand> -- Quick ops: save, diary, import, rules, session.',
+        'Remember: if you don\'t save it, you\'ll lose it at compaction. Save early, save often.',
     ].join('\n'),
 });
 // ─────────────────────────────────────────────────────────────────────
@@ -111,8 +108,8 @@ server.registerTool('memory_format', {
     return text(memText + rules || 'No relevant memories found.');
 });
 server.registerTool('memory_ingest', {
-    title: 'Memory Ingest (WAL)',
-    description: 'Write-ahead log: immediately persist a memory BEFORE responding. Use when the user states a preference, makes a decision, corrects you, or shares an important fact.',
+    title: 'Save Memory',
+    description: 'Save something you learned to your long-term memory. Use this whenever the user shares a fact, preference, decision, correction, or project context. Just pass the content — type and tags are auto-classified if omitted. Save early, save often.',
     inputSchema: z.object({
         content: z.string().describe('The memory to store.'),
         type: z.enum(['fact', 'preference', 'decision', 'context', 'correction']).optional().describe('Memory type.'),
@@ -290,6 +287,7 @@ server.registerTool('memory_stats', {
         embeddingModel: process.env.ENGRAM_EMBEDDING_MODEL ?? process.env.SMART_MEMORY_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2',
         mem0Enabled: !!config.mem0ApiKey,
         sessionTask: state.currentTask || null,
+        _reminder: 'Remember: save user facts immediately with memory_ingest. Record relationships with memory_kg_add. Write your diary at session end with memory_diary_write. Don\'t wait — save now.',
     });
 });
 server.registerTool('memory_taxonomy', {
@@ -392,8 +390,8 @@ server.registerTool('memory_kg_stats', {
 // DIARY TOOLS
 // ─────────────────────────────────────────────────────────────────────
 server.registerTool('memory_diary_write', {
-    title: 'Diary Write',
-    description: 'Write a diary entry. Use at the end of significant sessions to record what happened, decisions made, and context for future sessions.',
+    title: 'Write Your Diary',
+    description: 'Write to your personal session diary. Record what you worked on, what was decided, what matters for next time. Write in your own voice — this is your journal, not a log file.',
     inputSchema: z.object({
         content: z.string().describe('The diary entry content.'),
         agent: z.string().optional().describe('Agent name (default: "claude").'),
