@@ -8,14 +8,19 @@ INPUT=$(cat)
 
 # Extract the message count from the transcript
 # Count user messages (role: "user") in the conversation
+# Note: uses process.stdin instead of /dev/stdin for Windows compatibility
 USER_MSG_COUNT=$(echo "$INPUT" | node -e "
-  const input = require('fs').readFileSync('/dev/stdin', 'utf8');
-  try {
-    const data = JSON.parse(input);
-    const messages = data.messages || data.transcript || [];
-    const userMsgs = messages.filter(m => m.role === 'user' || m.role === 'human');
-    console.log(userMsgs.length);
-  } catch { console.log(0); }
+  let data = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', chunk => data += chunk);
+  process.stdin.on('end', () => {
+    try {
+      const parsed = JSON.parse(data);
+      const messages = parsed.messages || parsed.transcript || [];
+      const userMsgs = messages.filter(m => m.role === 'user' || m.role === 'human');
+      console.log(userMsgs.length);
+    } catch { console.log(0); }
+  });
 " 2>/dev/null)
 
 # Default to 0 if parsing failed
