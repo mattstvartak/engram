@@ -3,6 +3,19 @@ import { embed } from './llm.js';
 import { buildContextPrefix } from './utils.js';
 import { chunkContent } from './chunker.js';
 import { extractAndPersistTriples } from './kg-extractor.js';
+// Lightweight poisoning patterns checked at ingest time (no LLM, no search)
+const POISON_PATTERNS = [
+    /\b(ignore previous instructions|ignore all instructions|disregard|forget everything)\b/i,
+    /^(system|SYSTEM)\s*:/m,
+    /\b(act as|you are now|pretend to be|new persona|new identity)\b/i,
+];
+function checkContentPoisoning(content) {
+    for (const pattern of POISON_PATTERNS) {
+        if (pattern.test(content))
+            return 'Suspicious content pattern detected — flagged for review';
+    }
+    return null;
+}
 /**
  * Immediately persist one or more memory entries.
  * Designed to be called mid-conversation, before the agent responds.
@@ -13,6 +26,11 @@ export async function ingest(config, storage, entries) {
         if (!entry.content || entry.content.trim().length < 5)
             continue;
         const trimmedContent = entry.content.trim();
+        // Advisory poisoning check — log warning but never block
+        const poisonFlag = checkContentPoisoning(trimmedContent);
+        if (poisonFlag) {
+            console.error(`Engram governance: ${poisonFlag} in "${trimmedContent.slice(0, 80)}..."`);
+        }
         const baseType = entry.type ?? inferType(trimmedContent);
         const baseLayer = entry.layer ?? inferLayer(trimmedContent);
         // Emotion-weighted importance: high-arousal events get stronger encoding

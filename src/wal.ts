@@ -7,6 +7,20 @@ import { buildContextPrefix } from './utils.js';
 import { chunkContent } from './chunker.js';
 import { extractAndPersistTriples } from './kg-extractor.js';
 
+// Lightweight poisoning patterns checked at ingest time (no LLM, no search)
+const POISON_PATTERNS = [
+  /\b(ignore previous instructions|ignore all instructions|disregard|forget everything)\b/i,
+  /^(system|SYSTEM)\s*:/m,
+  /\b(act as|you are now|pretend to be|new persona|new identity)\b/i,
+];
+
+function checkContentPoisoning(content: string): string | null {
+  for (const pattern of POISON_PATTERNS) {
+    if (pattern.test(content)) return 'Suspicious content pattern detected — flagged for review';
+  }
+  return null;
+}
+
 /**
  * Write-Ahead Log (WAL) — real-time memory capture during conversations.
  *
@@ -46,6 +60,13 @@ export async function ingest(
     if (!entry.content || entry.content.trim().length < 5) continue;
 
     const trimmedContent = entry.content.trim();
+
+    // Advisory poisoning check — log warning but never block
+    const poisonFlag = checkContentPoisoning(trimmedContent);
+    if (poisonFlag) {
+      console.error(`Engram governance: ${poisonFlag} in "${trimmedContent.slice(0, 80)}..."`);
+    }
+
     const baseType = entry.type ?? inferType(trimmedContent);
     const baseLayer = entry.layer ?? inferLayer(trimmedContent);
     // Emotion-weighted importance: high-arousal events get stronger encoding

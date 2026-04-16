@@ -29,6 +29,8 @@ import {
 } from './knowledge-graph.js';
 import { writeDiaryEntry, readDiary, listDiaryDates } from './diary.js';
 import { importConversation, type ImportFormat } from './importer.js';
+import { runGovernanceCheck, detectContradictions } from './governance.js';
+import { syncBridge, exportRulesToBridge, importRulesFromBridge } from './procedural-bridge.js';
 
 // ── Config & Storage ────────────────────────────────────────────────
 
@@ -381,6 +383,72 @@ server.registerTool(
       sessionTask: state.currentTask || null,
       _reminder: 'Remember: save user facts immediately with memory_ingest. Record relationships with memory_kg_add. Write your diary at session end with memory_diary_write. Don\'t wait — save now.',
     });
+  }
+);
+
+server.registerTool(
+  'memory_govern',
+  {
+    title: 'Memory Governance',
+    description: 'Run governance checks on memory integrity. Actions: "check" (contradiction check on content), "drift" (semantic drift monitoring), "poison" (poisoning scan), "full" (all checks).',
+    inputSchema: z.object({
+      action: z.enum(['check', 'drift', 'poison', 'full']).describe('Governance action to run.'),
+      content: z.string().optional().describe('Content to check for contradictions (required for "check" action).'),
+      domain: z.string().optional().describe('Filter by domain.'),
+    }),
+  },
+  async ({ action, content, domain }) => {
+    const storage = await ensureStorage();
+
+    if (action === 'check') {
+      if (!content) return json({ error: 'Content required for contradiction check.' });
+      const result = await detectContradictions(config, storage, content, { domain });
+      return json(result);
+    }
+
+    if (action === 'full') {
+      const report = await runGovernanceCheck(config, storage, { content, domain });
+      return json(report);
+    }
+
+    if (action === 'drift') {
+      const { measureSemanticDrift } = await import('./governance.js');
+      const drift = await measureSemanticDrift(config, storage, { domain });
+      return json(drift);
+    }
+
+    if (action === 'poison') {
+      const { checkMemoryPoisoning } = await import('./governance.js');
+      const poison = await checkMemoryPoisoning(storage);
+      return json(poison);
+    }
+
+    return json({ error: 'Unknown action.' });
+  }
+);
+
+server.registerTool(
+  'memory_procedural_sync',
+  {
+    title: 'Sync Procedural Rules',
+    description: 'Sync procedural rules with Persona via the shared bridge file. "export" writes Engram rules to bridge, "import" reads Persona rules from bridge, "sync" does both.',
+    inputSchema: z.object({
+      direction: z.enum(['export', 'import', 'sync']).describe('Sync direction.'),
+    }),
+  },
+  async ({ direction }) => {
+    const storage = await ensureStorage();
+
+    if (direction === 'export') {
+      const count = await exportRulesToBridge(storage);
+      return json({ exported: count });
+    }
+    if (direction === 'import') {
+      const result = await importRulesFromBridge(storage);
+      return json(result);
+    }
+    const result = await syncBridge(storage);
+    return json(result);
   }
 );
 

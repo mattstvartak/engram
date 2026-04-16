@@ -230,16 +230,85 @@ async function mergeNearDuplicates(storage, chunks) {
     }
     return merged;
 }
-// ── FSRS Decay (Improvement 3) ─────────────────────────────────────
+// ── FSRS Decay (Improvement 3) + Adaptive Forgetting ──────────────
 // Free Spaced Repetition Scheduler: R = (1 + t/(9*S))^(-1)
 // More principled than exponential decay. Stability grows with successful recall.
+//
+// Adaptive forgetting (FadeMem-inspired): semantic proximity to recently
+// active memories modulates decay rate. Memories near active clusters
+// decay slower (proximity shield), isolated memories decay faster.
 function fsrsRetrievability(t, S) {
     return Math.pow(1 + t / (9 * S), -1);
+}
+/**
+ * Collect recently active memories (recalled or ingested in the last N days)
+ * to serve as "active cluster" exemplars for adaptive forgetting.
+ */
+function getActiveExemplars(chunks, windowDays = 7) {
+    const now = Date.now();
+    const cutoff = now - windowDays * 86_400_000;
+    return chunks
+        .filter(c => {
+        if (c.tier === 'archive')
+            return false;
+        const lastActive = c.lastRecalledAt
+            ? Math.max(new Date(c.lastRecalledAt).getTime(), new Date(c.createdAt).getTime())
+            : new Date(c.createdAt).getTime();
+        return lastActive >= cutoff;
+    })
+        .filter(c => c.embedding && c.embedding.length > 0)
+        .sort((a, b) => {
+        const aTime = new Date(a.lastRecalledAt ?? a.createdAt).getTime();
+        const bTime = new Date(b.lastRecalledAt ?? b.createdAt).getTime();
+        return bTime - aTime;
+    })
+        .slice(0, 10); // Keep top 10 most recent as exemplars
+}
+/**
+ * Compute max cosine similarity between a chunk and active exemplars.
+ * Returns 0 if no embedding available — falls back to tag overlap.
+ */
+function computeProximityFactor(chunk, exemplars) {
+    if (exemplars.length === 0)
+        return 0;
+    // Embedding-based proximity
+    if (chunk.embedding && chunk.embedding.length > 0) {
+        let maxSim = 0;
+        for (const ex of exemplars) {
+            if (!ex.embedding || ex.embedding.length !== chunk.embedding.length)
+                continue;
+            const sim = cosineSimilarity(chunk.embedding, ex.embedding);
+            if (sim > maxSim)
+                maxSim = sim;
+        }
+        return maxSim;
+    }
+    // Tag-based fallback: Jaccard similarity between tags
+    if (chunk.tags.length === 0)
+        return 0;
+    const chunkTags = new Set(chunk.tags);
+    let maxJaccard = 0;
+    for (const ex of exemplars) {
+        if (ex.tags.length === 0)
+            continue;
+        const exTags = new Set(ex.tags);
+        let intersection = 0;
+        for (const t of chunkTags)
+            if (exTags.has(t))
+                intersection++;
+        const union = new Set([...chunkTags, ...exTags]).size;
+        const jaccard = union > 0 ? intersection / union : 0;
+        if (jaccard > maxJaccard)
+            maxJaccard = jaccard;
+    }
+    return maxJaccard;
 }
 async function decayFSRS(storage, chunks) {
     let decayed = 0;
     const now = Date.now();
     const floors = { procedural: 0.15, semantic: 0.10, episodic: 0.05 };
+    // Adaptive forgetting: compute active exemplars once
+    const exemplars = getActiveExemplars(chunks);
     for (const chunk of chunks) {
         if (chunk.tier === 'archive')
             continue;
@@ -249,9 +318,24 @@ async function decayFSRS(storage, chunks) {
         const daysSinceTouch = (now - lastTouch) / 86_400_000;
         if (daysSinceTouch < 3)
             continue;
-        const stability = chunk.stability ?? 1.0;
+        const baseStability = chunk.stability ?? 1.0;
+        // Adaptive forgetting: proximity to active memories modulates stability
+        const proximity = computeProximityFactor(chunk, exemplars);
+        let effectiveStability;
+        if (proximity > 0.5) {
+            // Proximate memories: stability boosted by up to 3x
+            effectiveStability = baseStability * (1 + proximity * 2);
+        }
+        else if (proximity < 0.2) {
+            // Isolated memories: accelerated decay (70% stability)
+            effectiveStability = baseStability * 0.7;
+        }
+        else {
+            // Moderate proximity: normal decay
+            effectiveStability = baseStability;
+        }
         const floor = floors[chunk.cognitiveLayer] ?? 0.10;
-        const retrievability = fsrsRetrievability(daysSinceTouch, stability);
+        const retrievability = fsrsRetrievability(daysSinceTouch, effectiveStability);
         const newImportance = Math.max(floor, chunk.importance * retrievability);
         if (Math.abs(newImportance - chunk.importance) > 0.01) {
             await storage.updateChunk(chunk.id, { importance: newImportance });
