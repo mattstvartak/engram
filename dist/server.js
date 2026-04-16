@@ -10,14 +10,14 @@ import { extractFromConversation } from './extractor.js';
 import { consolidate } from './consolidator.js';
 import { extractRules, formatRulesForPrompt } from './procedural.js';
 import { recordRecallOutcome } from './outcome.js';
-import { mem0Extract, mem0SyncAll } from './mem0.js';
+import { mem0Extract } from './mem0.js';
 import { ingest } from './wal.js';
 import { readSessionState, updateSessionState, appendToSessionState, clearSessionState, } from './session-state.js';
 import { addTriple, replaceTriple, queryGraph, getTimeline, invalidateTriple, getGraphStats, } from './knowledge-graph.js';
 import { writeDiaryEntry, readDiary, listDiaryDates } from './diary.js';
 import { importConversation } from './importer.js';
 import { runGovernanceCheck, detectContradictions } from './governance.js';
-import { syncBridge, exportRulesToBridge, importRulesFromBridge } from './procedural-bridge.js';
+import { syncBridge, loadBridgeFile } from './procedural-bridge.js';
 // ── Config & Storage ────────────────────────────────────────────────
 const config = loadConfig();
 let _storage = null;
@@ -33,39 +33,31 @@ async function ensureStorage() {
 function text(t) { return { content: [{ type: 'text', text: t }] }; }
 function json(data) { return text(JSON.stringify(data, null, 2)); }
 // ── MCP Server ──────────────────────────────────────────────────────
-const server = new McpServer({ name: 'engram', version: '2.0.0' }, {
+const server = new McpServer({ name: 'engram', version: '2.1.0' }, {
     instructions: [
-        'Engram is your long-term memory. Everything you learn about the user, their projects, and their preferences lives here.',
+        'Engram is your long-term memory.',
         '',
-        'YOUR JOB: Save what matters. When the user tells you something about themselves, their work, or makes a decision — write it down immediately with memory_ingest. Don\'t wait. Don\'t batch. Save it now, before you forget.',
+        'Save what matters: memory_ingest for facts/preferences/decisions, memory_kg_add for relationships, memory_diary_write at session end.',
+        'Before answering about prior conversations: memory_search first.',
         '',
-        'THREE TOOLS YOU SHOULD USE CONSTANTLY:',
-        '• memory_ingest — Save a fact, preference, decision, or context. Just pass content — everything else is optional.',
-        '• memory_kg_add — Record a relationship between things (e.g., "Matt works-on lulld").',
-        '• memory_diary_write — At the end of a session, write what happened in your own words.',
-        '',
-        'BEFORE ANSWERING about anything from a prior conversation: call memory_search first. Your training data doesn\'t remember — Engram does.',
-        '',
-        'PERSONA INTEGRATION: If persona MCP is available, proactively call persona_signal on user reactions (correction, approval, frustration, elaboration, simplification, code_accepted, code_rejected, explicit_feedback, style_correction, praise).',
-        '',
-        'Remember: if you don\'t save it, you\'ll lose it at compaction. Save early, save often.',
+        'If persona MCP available: call persona_signal on user reactions (correction, approval, frustration, praise, etc).',
     ].join('\n'),
 });
 // ─────────────────────────────────────────────────────────────────────
 // CORE MEMORY TOOLS
 // ─────────────────────────────────────────────────────────────────────
 server.registerTool('memory_search', {
-    title: 'Memory Search',
-    description: 'Search long-term memories using hybrid ANN vector + keyword search with spreading activation. Returns relevant facts, preferences, decisions, and procedural rules.',
+    title: 'Search Memories',
+    description: 'Search long-term memories. Returns relevant facts, preferences, decisions, and rules. Set format=true to get pre-formatted output for prompt injection.',
     inputSchema: z.object({
         query: z.string().describe('Natural language search query.'),
         maxResults: z.number().min(1).max(50).optional().describe('Max results (default: 10).'),
         domain: z.string().optional().describe('Filter by domain/project.'),
         topic: z.string().optional().describe('Filter by topic.'),
-        cognitiveLoad: z.enum(['low', 'normal', 'high']).optional().describe('User cognitive load from Persona. "high" reduces results to top 3 high-importance memories. "low" allows full results.'),
+        cognitiveLoad: z.enum(['low', 'normal', 'high']).optional().describe('From Persona. "high" returns top 3 only.'),
+        format: z.boolean().optional().describe('If true, returns formatted text grouped by cognitive layer instead of JSON.'),
     }),
-}, async ({ query, maxResults, domain, topic, cognitiveLoad }) => {
-    // Cognitive-load gating: overloaded users get fewer, higher-quality results
+}, async ({ query, maxResults, domain, topic, cognitiveLoad, format: formatOutput }) => {
     let effectiveMaxResults = maxResults;
     if (cognitiveLoad === 'high') {
         effectiveMaxResults = Math.min(effectiveMaxResults ?? 10, 3);
@@ -79,11 +71,16 @@ server.registerTool('memory_search', {
     catch {
         selected = results.slice(0, cognitiveLoad === 'high' ? 3 : 5);
     }
-    // Under high cognitive load, prefer high-importance memories
     if (cognitiveLoad === 'high' && selected.length > 3) {
         selected = selected
             .sort((a, b) => b.chunk.importance - a.chunk.importance)
             .slice(0, 3);
+    }
+    // Formatted output mode (replaces old memory_format tool)
+    if (formatOutput) {
+        const memText = formatRecalledMemories(selected);
+        const rules = await formatRulesForPrompt(storage);
+        return text(memText + rules || 'No relevant memories found.');
     }
     return json({
         total: results.length,
@@ -101,29 +98,9 @@ server.registerTool('memory_search', {
         })),
     });
 });
-server.registerTool('memory_format', {
-    title: 'Memory Format',
-    description: 'Search and format recalled memories for context injection, grouped by cognitive layer.',
-    inputSchema: z.object({
-        query: z.string().describe('Topic or question to recall memories for.'),
-    }),
-}, async ({ query }) => {
-    const storage = await ensureStorage();
-    const results = await search(config, storage, query);
-    let selected;
-    try {
-        selected = await selectRelevant(config, query, results);
-    }
-    catch {
-        selected = results.slice(0, 5);
-    }
-    const memText = formatRecalledMemories(selected);
-    const rules = await formatRulesForPrompt(storage);
-    return text(memText + rules || 'No relevant memories found.');
-});
 server.registerTool('memory_ingest', {
     title: 'Save Memory',
-    description: 'Save something you learned to your long-term memory. Use this whenever the user shares a fact, preference, decision, correction, or project context. Just pass the content — type and tags are auto-classified if omitted. Save early, save often.',
+    description: 'Save a fact, preference, decision, correction, or context to long-term memory. Auto-classifies type/tags if omitted. Auto-checks for duplicates before saving.',
     inputSchema: z.object({
         content: z.string().describe('The memory to store.'),
         type: z.enum(['fact', 'preference', 'decision', 'context', 'correction']).optional().describe('Memory type.'),
@@ -131,12 +108,26 @@ server.registerTool('memory_ingest', {
         tags: z.string().optional().describe('Comma-separated tags.'),
         domain: z.string().optional().describe('Domain/project namespace.'),
         topic: z.string().optional().describe('Topic within the domain.'),
-        sentiment: z.enum(['frustrated', 'curious', 'satisfied', 'neutral', 'excited', 'confused']).optional().describe('Emotional sentiment from Persona bridge.'),
-        emotionalValence: z.number().min(-1).max(1).optional().describe('Emotional valence -1 (negative) to 1 (positive). From Persona. Boosts importance for emotionally charged memories.'),
-        emotionalArousal: z.number().min(0).max(1).optional().describe('Emotional arousal 0-1. From Persona. High-arousal memories get stronger encoding.'),
+        sentiment: z.enum(['frustrated', 'curious', 'satisfied', 'neutral', 'excited', 'confused']).optional().describe('Emotional sentiment from Persona.'),
+        emotionalValence: z.number().min(-1).max(1).optional().describe('Emotional valence from Persona. Boosts importance for charged memories.'),
+        emotionalArousal: z.number().min(0).max(1).optional().describe('Emotional arousal from Persona. High arousal = stronger encoding.'),
     }),
 }, async ({ content, type, importance, tags, domain, topic, sentiment, emotionalValence, emotionalArousal }) => {
     const storage = await ensureStorage();
+    // Auto duplicate check (replaces old memory_check_duplicate tool)
+    const dupeResults = await search(config, storage, content, 5);
+    const similar = dupeResults.filter(r => r.score >= 0.75);
+    if (similar.length > 0) {
+        return json({
+            ingested: 0,
+            duplicate: true,
+            similar: similar.map(r => ({
+                id: r.chunk.id,
+                content: r.chunk.content,
+                score: Math.round(r.score * 1000) / 1000,
+            })),
+        });
+    }
     const chunks = await ingest(config, storage, [{
             content,
             type: type,
@@ -161,16 +152,23 @@ server.registerTool('memory_ingest', {
     });
 });
 server.registerTool('memory_extract', {
-    title: 'Memory Extract',
-    description: 'Extract memories from a conversation. Uses LLM if OPENROUTER_API_KEY is set, otherwise falls back to heuristic extraction. Classifies into facts, preferences, decisions, corrections.',
+    title: 'Extract Memories',
+    description: 'Extract memories from a conversation. Uses LLM or heuristic fallback. Set rulesOnly=true to extract procedural rules only.',
     inputSchema: z.object({
         messages: z.string().describe('JSON string of message array: [{role: "user", content: "..."}, ...]'),
         conversationId: z.string().optional().describe('Session/conversation identifier.'),
+        rulesOnly: z.boolean().optional().describe('If true, only extract procedural rules.'),
     }),
-}, async ({ messages, conversationId }) => {
+}, async ({ messages, conversationId, rulesOnly }) => {
     const storage = await ensureStorage();
     const parsed = JSON.parse(messages);
     const convId = conversationId ?? `mcp-${Date.now()}`;
+    // Rules-only mode (replaces old memory_extract_rules tool)
+    if (rulesOnly) {
+        await extractRules(config, storage, parsed);
+        const rules = await formatRulesForPrompt(storage);
+        return text(rules || 'No procedural rules extracted.');
+    }
     const allChunks = [];
     if (config.extractionProvider === 'local' || config.extractionProvider === 'both') {
         const chunks = await extractFromConversation(config, storage, parsed, convId);
@@ -189,42 +187,26 @@ server.registerTool('memory_extract', {
     }
     return json({ extracted: allChunks.length, memories: allChunks });
 });
-server.registerTool('memory_check_duplicate', {
-    title: 'Check Duplicate',
-    description: 'Check if a memory already exists before ingesting. Returns similar existing memories with similarity scores.',
-    inputSchema: z.object({
-        content: z.string().describe('The memory content to check.'),
-        threshold: z.number().min(0).max(1).optional().describe('Similarity threshold (default: 0.75).'),
-    }),
-}, async ({ content, threshold }) => {
-    const storage = await ensureStorage();
-    const results = await search(config, storage, content, 5);
-    const cutoff = threshold ?? 0.75;
-    const similar = results
-        .filter(r => r.score >= cutoff)
-        .map(r => ({
-        id: r.chunk.id,
-        content: r.chunk.content,
-        type: r.chunk.type,
-        score: Math.round(r.score * 1000) / 1000,
-    }));
-    return json({
-        isDuplicate: similar.length > 0,
-        similar,
-    });
-});
 server.registerTool('memory_maintain', {
-    title: 'Memory Maintain',
-    description: 'Run memory consolidation: decay importance, promote/demote tiers, link related memories, merge near-duplicates.',
+    title: 'Consolidate',
+    description: 'Run memory consolidation: decay, promote/demote tiers, link related, merge duplicates, self-organize, and sync Persona bridge.',
     inputSchema: z.object({}),
 }, async () => {
     const storage = await ensureStorage();
     const stats = await consolidate(storage, config);
-    return json({ action: 'consolidation', ...stats });
+    // Auto-sync procedural bridge during maintenance
+    let bridgeSync = { exported: 0, imported: 0, reinforced: 0, conflicts: 0 };
+    try {
+        bridgeSync = await syncBridge(storage);
+    }
+    catch {
+        // Bridge sync is best-effort
+    }
+    return json({ action: 'consolidation', ...stats, bridge: bridgeSync });
 });
 server.registerTool('memory_rules', {
-    title: 'Memory Rules',
-    description: 'Show active procedural rules learned from user corrections and preferences.',
+    title: 'Procedural Rules',
+    description: 'Show active procedural rules learned from corrections and preferences.',
     inputSchema: z.object({}),
 }, async () => {
     const storage = await ensureStorage();
@@ -232,10 +214,10 @@ server.registerTool('memory_rules', {
     return text(t || 'No active procedural rules.');
 });
 server.registerTool('memory_outcome', {
-    title: 'Memory Outcome',
-    description: 'Record whether recalled memories were helpful, corrected, or irrelevant. Adjusts importance and strengthens graph edges.',
+    title: 'Recall Outcome',
+    description: 'Record whether recalled memories were helpful, corrected, or irrelevant. Adjusts importance.',
     inputSchema: z.object({
-        outcome: z.enum(['helpful', 'corrected', 'irrelevant']).describe('Outcome of the recalled memories.'),
+        outcome: z.enum(['helpful', 'corrected', 'irrelevant']).describe('Outcome.'),
         chunkIds: z.string().describe('Comma-separated memory chunk IDs.'),
     }),
 }, async ({ outcome, chunkIds }) => {
@@ -248,8 +230,8 @@ server.registerTool('memory_session', {
     title: 'Session State',
     description: 'Manage session state (hot RAM). Actions: show, task, context, decision, action, clear.',
     inputSchema: z.object({
-        action: z.enum(['show', 'task', 'context', 'decision', 'action', 'clear']).describe('Action to perform.'),
-        value: z.string().optional().describe('Value for the action (required for task/context/decision/action).'),
+        action: z.enum(['show', 'task', 'context', 'decision', 'action', 'clear']).describe('Action.'),
+        value: z.string().optional().describe('Value (required for task/context/decision/action).'),
     }),
 }, async ({ action, value }) => {
     switch (action) {
@@ -275,8 +257,8 @@ server.registerTool('memory_session', {
     }
 });
 server.registerTool('memory_stats', {
-    title: 'Memory Stats',
-    description: 'Show memory statistics: chunk counts by tier/layer/type, rule counts, knowledge graph stats.',
+    title: 'Stats',
+    description: 'Memory system stats: chunks by tier/layer/type, rules, knowledge graph, bridge status, and taxonomy.',
     inputSchema: z.object({}),
 }, async () => {
     const storage = await ensureStorage();
@@ -290,9 +272,23 @@ server.registerTool('memory_stats', {
         types[c.type] = (types[c.type] ?? 0) + 1;
     }
     const rules = await storage.getRules();
-    const kgStats = await storage.getTripleStats();
+    const kgStats = await getGraphStats(storage);
     const state = readSessionState(config.dataDir);
     const diaryDates = listDiaryDates(config.dataDir);
+    // Taxonomy (folded in from old memory_taxonomy tool)
+    const tree = await storage.getTaxonomy();
+    // Bridge status (new observability)
+    let bridge = { status: 'no bridge file' };
+    try {
+        const bridgeFile = loadBridgeFile();
+        bridge = {
+            lastUpdated: bridgeFile.lastUpdated,
+            totalRules: bridgeFile.rules.length,
+            engramRules: bridgeFile.rules.filter(r => r.source === 'engram').length,
+            personaRules: bridgeFile.rules.filter(r => r.source === 'persona').length,
+        };
+    }
+    catch { /* no bridge file */ }
     return json({
         totalChunks: all.length,
         byTier: tiers,
@@ -301,21 +297,20 @@ server.registerTool('memory_stats', {
         proceduralRules: rules.length,
         activeRules: rules.filter(r => r.confidence > 0.3).length,
         knowledgeGraph: kgStats,
+        taxonomy: tree,
+        bridge,
         diaryEntries: diaryDates.length,
         llmAvailable: isLlmAvailable(),
-        extractionMode: isLlmAvailable() ? 'llm' : 'heuristic',
         embeddingModel: process.env.ENGRAM_EMBEDDING_MODEL ?? process.env.SMART_MEMORY_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2',
-        mem0Enabled: !!config.mem0ApiKey,
         sessionTask: state.currentTask || null,
-        _reminder: 'Remember: save user facts immediately with memory_ingest. Record relationships with memory_kg_add. Write your diary at session end with memory_diary_write. Don\'t wait — save now.',
     });
 });
 server.registerTool('memory_govern', {
-    title: 'Memory Governance',
-    description: 'Run governance checks on memory integrity. Actions: "check" (contradiction check on content), "drift" (semantic drift monitoring), "poison" (poisoning scan), "full" (all checks).',
+    title: 'Governance Check',
+    description: 'Advisory checks: "check" (contradictions), "drift" (semantic drift), "poison" (injection scan), "full" (all).',
     inputSchema: z.object({
-        action: z.enum(['check', 'drift', 'poison', 'full']).describe('Governance action to run.'),
-        content: z.string().optional().describe('Content to check for contradictions (required for "check" action).'),
+        action: z.enum(['check', 'drift', 'poison', 'full']).describe('Governance action.'),
+        content: z.string().optional().describe('Content to check (required for "check").'),
         domain: z.string().optional().describe('Filter by domain.'),
     }),
 }, async ({ action, content, domain }) => {
@@ -342,46 +337,18 @@ server.registerTool('memory_govern', {
     }
     return json({ error: 'Unknown action.' });
 });
-server.registerTool('memory_procedural_sync', {
-    title: 'Sync Procedural Rules',
-    description: 'Sync procedural rules with Persona via the shared bridge file. "export" writes Engram rules to bridge, "import" reads Persona rules from bridge, "sync" does both.',
-    inputSchema: z.object({
-        direction: z.enum(['export', 'import', 'sync']).describe('Sync direction.'),
-    }),
-}, async ({ direction }) => {
-    const storage = await ensureStorage();
-    if (direction === 'export') {
-        const count = await exportRulesToBridge(storage);
-        return json({ exported: count });
-    }
-    if (direction === 'import') {
-        const result = await importRulesFromBridge(storage);
-        return json(result);
-    }
-    const result = await syncBridge(storage);
-    return json(result);
-});
-server.registerTool('memory_taxonomy', {
-    title: 'Memory Taxonomy',
-    description: 'Show the domain/topic hierarchy with memory counts. Use to understand how memories are organized.',
-    inputSchema: z.object({}),
-}, async () => {
-    const storage = await ensureStorage();
-    const tree = await storage.getTaxonomy();
-    return json(tree);
-});
 // ─────────────────────────────────────────────────────────────────────
 // KNOWLEDGE GRAPH TOOLS
 // ─────────────────────────────────────────────────────────────────────
 server.registerTool('memory_kg_add', {
-    title: 'Knowledge Graph Add',
-    description: 'Add a fact to the knowledge graph as a subject-predicate-object triple. e.g. ("Matt", "works-at", "Acme Corp"). Use replace=true to auto-invalidate conflicting facts.',
+    title: 'KG Add',
+    description: 'Add a subject-predicate-object triple. Use replace=true to auto-invalidate conflicting facts.',
     inputSchema: z.object({
-        subject: z.string().describe('The entity (e.g. "Matt", "finch-core").'),
-        predicate: z.string().describe('The relationship (e.g. "works-at", "uses", "depends-on").'),
-        object: z.string().describe('The target (e.g. "Acme Corp", "TypeScript").'),
-        replace: z.boolean().optional().describe('If true, invalidate existing triples with the same subject+predicate.'),
-        confidence: z.number().min(0).max(1).optional().describe('Confidence 0.0-1.0 (default: 0.5).'),
+        subject: z.string().describe('Entity (e.g. "Matt").'),
+        predicate: z.string().describe('Relationship (e.g. "works-at").'),
+        object: z.string().describe('Target (e.g. "Acme Corp").'),
+        replace: z.boolean().optional().describe('Invalidate existing triples with same subject+predicate.'),
+        confidence: z.number().min(0).max(1).optional().describe('Confidence 0-1 (default: 0.5).'),
     }),
 }, async ({ subject, predicate, object, replace, confidence }) => {
     const storage = await ensureStorage();
@@ -390,13 +357,13 @@ server.registerTool('memory_kg_add', {
     return json({ added: true, triple: { id: triple.id, subject: triple.subject, predicate: triple.predicate, object: triple.object } });
 });
 server.registerTool('memory_kg_query', {
-    title: 'Knowledge Graph Query',
-    description: 'Query the knowledge graph. Filter by subject, predicate, and/or object. Set activeOnly=true to exclude invalidated facts.',
+    title: 'KG Query',
+    description: 'Query knowledge graph triples. Filter by subject, predicate, and/or object.',
     inputSchema: z.object({
-        subject: z.string().optional().describe('Filter by subject entity.'),
-        predicate: z.string().optional().describe('Filter by relationship type.'),
-        object: z.string().optional().describe('Filter by target entity.'),
-        activeOnly: z.boolean().optional().describe('Only return currently valid facts (default: true).'),
+        subject: z.string().optional().describe('Filter by subject.'),
+        predicate: z.string().optional().describe('Filter by relationship.'),
+        object: z.string().optional().describe('Filter by target.'),
+        activeOnly: z.boolean().optional().describe('Only valid facts (default: true).'),
     }),
 }, async ({ subject, predicate, object, activeOnly }) => {
     const storage = await ensureStorage();
@@ -407,21 +374,16 @@ server.registerTool('memory_kg_query', {
     return json({
         count: triples.length,
         triples: triples.map(t => ({
-            id: t.id,
-            subject: t.subject,
-            predicate: t.predicate,
-            object: t.object,
-            confidence: t.confidence,
-            validFrom: t.validFrom,
-            validTo: t.validTo,
+            id: t.id, subject: t.subject, predicate: t.predicate, object: t.object,
+            confidence: t.confidence, validFrom: t.validFrom, validTo: t.validTo,
         })),
     });
 });
 server.registerTool('memory_kg_invalidate', {
-    title: 'Knowledge Graph Invalidate',
-    description: 'Mark a knowledge graph fact as no longer valid. The fact remains in history but is excluded from active queries.',
+    title: 'KG Invalidate',
+    description: 'Mark a fact as no longer valid. Stays in history.',
     inputSchema: z.object({
-        tripleId: z.string().describe('The triple ID to invalidate.'),
+        tripleId: z.string().describe('Triple ID to invalidate.'),
     }),
 }, async ({ tripleId }) => {
     const storage = await ensureStorage();
@@ -429,10 +391,10 @@ server.registerTool('memory_kg_invalidate', {
     return text(`Triple ${tripleId} invalidated.`);
 });
 server.registerTool('memory_kg_timeline', {
-    title: 'Knowledge Graph Timeline',
-    description: 'Get the chronological timeline of all facts about an entity, including invalidated ones.',
+    title: 'KG Timeline',
+    description: 'Chronological history of all facts about an entity.',
     inputSchema: z.object({
-        entity: z.string().describe('The entity name to get the timeline for.'),
+        entity: z.string().describe('Entity name.'),
     }),
 }, async ({ entity }) => {
     const storage = await ensureStorage();
@@ -440,31 +402,19 @@ server.registerTool('memory_kg_timeline', {
     return json({
         entity,
         facts: timeline.map(t => ({
-            subject: t.subject,
-            predicate: t.predicate,
-            object: t.object,
-            validFrom: t.validFrom,
-            validTo: t.validTo,
-            active: !t.validTo,
+            subject: t.subject, predicate: t.predicate, object: t.object,
+            validFrom: t.validFrom, validTo: t.validTo, active: !t.validTo,
         })),
     });
-});
-server.registerTool('memory_kg_stats', {
-    title: 'Knowledge Graph Stats',
-    description: 'Show knowledge graph statistics.',
-    inputSchema: z.object({}),
-}, async () => {
-    const storage = await ensureStorage();
-    return json(await getGraphStats(storage));
 });
 // ─────────────────────────────────────────────────────────────────────
 // DIARY TOOLS
 // ─────────────────────────────────────────────────────────────────────
 server.registerTool('memory_diary_write', {
-    title: 'Write Your Diary',
-    description: 'Write to your personal session diary. Record what you worked on, what was decided, what matters for next time. Write in your own voice — this is your journal, not a log file.',
+    title: 'Write Diary',
+    description: 'Write a session diary entry. Record what happened, what was decided, what matters next.',
     inputSchema: z.object({
-        content: z.string().describe('The diary entry content.'),
+        content: z.string().describe('Diary entry.'),
         agent: z.string().optional().describe('Agent name (default: "claude").'),
     }),
 }, async ({ content, agent }) => {
@@ -472,53 +422,31 @@ server.registerTool('memory_diary_write', {
     return json({ written: true, date: entry.date, time: entry.time, agent: entry.agent });
 });
 server.registerTool('memory_diary_read', {
-    title: 'Diary Read',
-    description: 'Read diary entries. Returns entries from recent days or a specific date.',
+    title: 'Read Diary',
+    description: 'Read diary entries from recent days or a specific date.',
     inputSchema: z.object({
-        date: z.string().optional().describe('Specific date (YYYY-MM-DD). If omitted, returns recent entries.'),
-        daysBack: z.number().optional().describe('Number of days to look back (default: 7).'),
-        agent: z.string().optional().describe('Filter by agent name.'),
+        date: z.string().optional().describe('YYYY-MM-DD. If omitted, returns recent.'),
+        daysBack: z.number().optional().describe('Days to look back (default: 7).'),
+        agent: z.string().optional().describe('Filter by agent.'),
     }),
 }, async ({ date, daysBack, agent }) => {
     const entries = readDiary(config.dataDir, { date, daysBack, agent });
     return json(entries);
 });
 // ─────────────────────────────────────────────────────────────────────
-// IMPORT / EXTRACTION TOOLS
+// IMPORT
 // ─────────────────────────────────────────────────────────────────────
 server.registerTool('memory_import', {
-    title: 'Import Conversations',
-    description: 'Bulk import conversations from chat exports. Supported formats: claude-jsonl (Claude Code JSONL), chatgpt-json (ChatGPT export), plain-text (user:/assistant: format).',
+    title: 'Import',
+    description: 'Bulk import from chat exports: claude-jsonl, chatgpt-json, or plain-text.',
     inputSchema: z.object({
-        format: z.enum(['claude-jsonl', 'chatgpt-json', 'plain-text']).describe('The export format.'),
-        content: z.string().describe('The raw export content (JSONL string, JSON string, or plain text).'),
+        format: z.enum(['claude-jsonl', 'chatgpt-json', 'plain-text']).describe('Export format.'),
+        content: z.string().describe('Raw export content.'),
     }),
 }, async ({ format, content }) => {
     const storage = await ensureStorage();
     const result = await importConversation(config, storage, format, content);
     return json(result);
-});
-server.registerTool('memory_extract_rules', {
-    title: 'Extract Procedural Rules',
-    description: 'Analyze a conversation to extract procedural rules. Works with LLM or heuristic extraction.',
-    inputSchema: z.object({
-        messages: z.string().describe('JSON string of message array: [{role: "user", content: "..."}, ...]'),
-    }),
-}, async ({ messages }) => {
-    const storage = await ensureStorage();
-    const parsed = JSON.parse(messages);
-    await extractRules(config, storage, parsed);
-    const rules = await formatRulesForPrompt(storage);
-    return text(rules || 'No procedural rules extracted.');
-});
-server.registerTool('memory_mem0_sync', {
-    title: 'Mem0 Sync',
-    description: 'Sync all memories from Mem0 cloud to local store. Requires MEM0_API_KEY.',
-    inputSchema: z.object({}),
-}, async () => {
-    const storage = await ensureStorage();
-    const count = await mem0SyncAll(config, storage);
-    return text(`Synced ${count} new memories from Mem0 cloud.`);
 });
 // ── Start Server ────────────────────────────────────────────────────
 async function main() {

@@ -11,6 +11,7 @@ export async function consolidate(storage, config) {
         linked: 0, decayed: 0, promoted: 0, demoted: 0,
         reactivated: 0, dailyMoved: 0, merged: 0,
         episodicClustered: 0, episodicSummarized: 0,
+        selfOrganized: 0,
     };
     let chunks = await storage.listChunks();
     // Biased replay: prioritize chunks by importance * recency * surprise
@@ -26,6 +27,8 @@ export async function consolidate(storage, config) {
         ? await decayFSRS(storage, chunks) + await decayIrrelevant(storage, chunks)
         : await decayImportance(storage, chunks) + await decayIrrelevant(storage, chunks);
     stats.merged = await mergeNearDuplicates(storage, chunks);
+    // Self-organizing memories: auto-describe undescribed memories and generate cross-links
+    stats.selfOrganized = await selfOrganize(storage, chunks);
     // Episodic-to-semantic consolidation (Improvement 8)
     if (cfg.enableEpisodicConsolidation) {
         const episodic = await consolidateEpisodic(cfg, storage);
@@ -395,6 +398,72 @@ function replayPriority(chunk, now) {
     return importance * recency * (1 + surprise);
 }
 // ── Helpers ──────────────────────────────────────────────────────────
+// ── Self-Organizing Memories ─────────────────────────────────────────
+// Auto-generate domain/topic for memories that lack them, and create
+// cross-links between semantically related memories that share no tags.
+// Runs during consolidation — no new MCP tools needed.
+async function selfOrganize(storage, chunks) {
+    let organized = 0;
+    // Phase 1: Auto-describe — infer domain/topic from content heuristics
+    const undescribed = chunks.filter(c => c.tier !== 'archive' && (!c.domain || !c.topic));
+    for (const chunk of undescribed.slice(0, 50)) {
+        const updates = {};
+        const lower = chunk.content.toLowerCase();
+        // Domain inference from keywords
+        if (!chunk.domain) {
+            const domainSignals = {
+                code: ['function', 'import', 'export', 'typescript', 'react', 'component', 'api', 'endpoint', 'bug', 'refactor', 'deploy'],
+                design: ['figma', 'layout', 'color', 'font', 'responsive', 'ui', 'ux', 'component', 'tailwind'],
+                infrastructure: ['vercel', 'docker', 'ci/cd', 'deploy', 'database', 'postgres', 'env', 'server'],
+                business: ['pricing', 'customer', 'marketing', 'revenue', 'competitor', 'launch', 'user'],
+                personal: ['prefer', 'like', 'dislike', 'always', 'never', 'habit', 'schedule'],
+            };
+            for (const [domain, keywords] of Object.entries(domainSignals)) {
+                const hits = keywords.filter(k => lower.includes(k)).length;
+                if (hits >= 2) {
+                    updates.domain = domain;
+                    break;
+                }
+            }
+        }
+        // Topic inference from tags or content
+        if (!chunk.topic && chunk.tags.length > 0) {
+            // Use the most specific tag as topic
+            updates.topic = chunk.tags
+                .filter(t => t.length > 2 && !['general', 'misc', 'other'].includes(t))
+                .sort((a, b) => b.length - a.length)[0];
+        }
+        if (Object.keys(updates).length > 0) {
+            await storage.updateChunk(chunk.id, updates);
+            organized++;
+        }
+    }
+    // Phase 2: Cross-link — find semantically similar memories with no existing edges
+    const candidates = chunks
+        .filter(c => c.tier !== 'archive' && c.embedding && c.embedding.length > 0)
+        .slice(0, 100);
+    for (let i = 0; i < candidates.length; i++) {
+        const a = candidates[i];
+        const existingTargets = new Set(getEdgeTargetIds(a.relatedMemories));
+        for (let j = i + 1; j < candidates.length; j++) {
+            const b = candidates[j];
+            if (existingTargets.has(b.id))
+                continue;
+            const sim = cosineSimilarity(a.embedding, b.embedding);
+            if (sim > 0.7 && sim < 0.9) { // Related but not duplicate
+                const weight = Math.min(1.0, sim);
+                const aEdges = addEdge(a.relatedMemories, b.id, 'semantic', weight);
+                const bEdges = addEdge(b.relatedMemories, a.id, 'semantic', weight);
+                await storage.updateChunk(a.id, { relatedMemories: aEdges });
+                await storage.updateChunk(b.id, { relatedMemories: bEdges });
+                a.relatedMemories = aEdges;
+                b.relatedMemories = bEdges;
+                organized++;
+            }
+        }
+    }
+    return organized;
+}
 function daysSince(dateStr) {
     return (Date.now() - new Date(dateStr).getTime()) / 86_400_000;
 }

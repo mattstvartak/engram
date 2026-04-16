@@ -12,6 +12,7 @@
     "build": "rm -rf dist && tsc",
     "dev": "tsc --watch",
     "start": "node dist/server.js",
+    "test": "node --import tsx --test tests/*.test.ts",
     "bench": "node --import tsx benchmarks/bench.ts",
     "bench:verbose": "node --import tsx benchmarks/bench.ts --verbose",
     "bench:longmemeval": "node --import tsx benchmarks/longmemeval.ts",

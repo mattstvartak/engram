@@ -11,6 +11,7 @@ export interface ConsolidationStats {
     merged: number;
     episodicClustered: number;
     episodicSummarized: number;
+    selfOrganized: number;
 }
 /**
  * Background consolidation pass: links, decays, promotes, demotes, and merges memories.

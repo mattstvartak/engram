@@ -113,19 +113,57 @@ function findMatchingRule(newRule, existing) {
 function isContradictory(a, b) {
     const aLower = a.toLowerCase();
     const bLower = b.toLowerCase();
-    // Simple negation check
-    const negations = ['not', 'never', "don't", 'avoid', 'stop', 'no longer'];
+    // Negation-based detection
+    const negations = ['not', 'never', "don't", 'avoid', 'stop', 'no longer', "won't", 'without'];
     const aHasNeg = negations.some(n => aLower.includes(n));
     const bHasNeg = negations.some(n => bLower.includes(n));
-    // If one has negation and the other doesn't, and they share key words
+    // If one has negation and the other doesn't, check for semantic overlap
     if (aHasNeg !== bHasNeg) {
-        const aWords = new Set(aLower.split(/\s+/).filter(w => w.length > 4));
-        const bWords = new Set(bLower.split(/\s+/).filter(w => w.length > 4));
+        const aWords = new Set(aLower.split(/\s+/).filter(w => w.length > 3));
+        const bWords = new Set(bLower.split(/\s+/).filter(w => w.length > 3));
         let overlap = 0;
         for (const w of aWords)
             if (bWords.has(w))
                 overlap++;
-        return overlap >= 3;
+        // Lower threshold: 2 shared words with negation inversion = likely contradiction
+        if (overlap >= 2)
+            return true;
+    }
+    // Value contradiction: same predicate, different object
+    // e.g. "prefers TypeScript" vs "prefers Python"
+    const predicates = ['prefers?', 'uses?', 'wants?', 'chooses?', 'switched to', 'moved to'];
+    for (const pred of predicates) {
+        const regex = new RegExp(`\\b${pred}\\s+(\\S+)`, 'i');
+        const aMatch = aLower.match(regex);
+        const bMatch = bLower.match(regex);
+        if (aMatch && bMatch && aMatch[1] !== bMatch[1]) {
+            // Same predicate but different value — check subject overlap
+            const aSubj = aLower.split(/\s+/).slice(0, 3);
+            const bSubj = bLower.split(/\s+/).slice(0, 3);
+            const subjOverlap = aSubj.some(w => bSubj.includes(w) && w.length > 3);
+            if (subjOverlap)
+                return true;
+        }
+    }
+    // Antonym detection for common pairs
+    const antonymPairs = [
+        ['always', 'never'], ['enable', 'disable'], ['allow', 'block'],
+        ['verbose', 'terse'], ['include', 'exclude'], ['before', 'after'],
+        ['more', 'less'], ['increase', 'decrease'], ['add', 'remove'],
+    ];
+    for (const [pos, neg] of antonymPairs) {
+        if ((aLower.includes(pos) && bLower.includes(neg)) ||
+            (aLower.includes(neg) && bLower.includes(pos))) {
+            // Check they're about the same thing (word overlap)
+            const aWords = new Set(aLower.split(/\s+/).filter(w => w.length > 3 && w !== pos && w !== neg));
+            const bWords = new Set(bLower.split(/\s+/).filter(w => w.length > 3 && w !== pos && w !== neg));
+            let overlap = 0;
+            for (const w of aWords)
+                if (bWords.has(w))
+                    overlap++;
+            if (overlap >= 2)
+                return true;
+        }
     }
     return false;
 }
