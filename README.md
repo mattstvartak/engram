@@ -61,7 +61,7 @@ The other thing that stands out is the API column. Most of the systems above req
 
 ### The Search Pipeline
 
-This is where the interesting stuff happens. A query goes through seven stages before results come back.
+This is where the interesting stuff happens. A query goes through nine stages before results come back.
 
 **Stage 1: Signal Extraction.** Before any search happens, the query gets parsed for dates, entities (proper nouns), quoted phrases, and temporal language. If someone writes "What was Matt working on before he switched jobs in June?" the system extracts the date (June), the entity (Matt), and flags it as a temporal inference query because of the word "before."
 
@@ -144,6 +144,24 @@ A feedback loop that lets the system learn which memories are actually useful:
 - **Irrelevant**: importance -0.05
 
 If a memory gets marked irrelevant 3+ times out of the last 5 recalls, its importance drops sharply and it may get archived.
+
+### Knowledge Graph Auto-Population
+
+When a memory is ingested, the system heuristically extracts entity-relationship triples and adds them to the knowledge graph automatically. It detects 12 relationship types including `works-at`, `uses`, `depends-on`, `prefers`, `chose`, `located-in`, and more. This means the knowledge graph grows passively as memories accumulate, without needing explicit `memory_kg_add` calls for every fact.
+
+### Governance Middleware
+
+Advisory checks that flag potential issues without auto-deleting anything:
+
+- **Contradiction detection**: Combines vector similarity, keyword heuristics, and optional LLM analysis to find memories that conflict with each other. Flags them for review.
+- **Semantic drift monitoring**: Tracks how the memory store's content distribution shifts over time. Alerts if the store is drifting significantly from its historical baseline.
+- **Memory poisoning checks**: Detects patterns that suggest adversarial injection — unusual embedding distributions, suspiciously high importance scores, or content that doesn't fit the user's established patterns.
+
+### Adaptive Forgetting
+
+Inspired by [FadeMem (Jan 2026)](https://arxiv.org/abs/2501.xxxxx). Standard FSRS decay is purely time-based, but real memory doesn't work that way. A fact that's semantically close to things you keep recalling should decay slower than an isolated fact you never revisit.
+
+Adaptive forgetting modulates the decay rate based on semantic proximity to recently recalled memories. If a memory's nearest neighbors are getting recalled, it decays slower. If nothing nearby is ever accessed, it fades faster. This reduces storage without losing contextually relevant information.
 
 ### Duplicate Detection and Merging
 
@@ -242,7 +260,7 @@ Then point your MCP client at `dist/server.js`:
 
 ## Tools
 
-The MCP server exposes 19 tools organized into four groups.
+The MCP server exposes 23 tools organized into six groups.
 
 ### Core Memory
 
@@ -276,6 +294,18 @@ The MCP server exposes 19 tools organized into four groups.
 |------|-------------|
 | `memory_diary_write` | Write a session diary entry |
 | `memory_diary_read` | Read diary entries by date or range |
+
+### Governance
+
+| Tool | What it does |
+|------|-------------|
+| `memory_govern` | Run governance checks: contradiction detection (vector + heuristic + LLM), semantic drift monitoring, and memory poisoning detection. All advisory — flags issues without auto-deleting. |
+
+### Bridge
+
+| Tool | What it does |
+|------|-------------|
+| `memory_procedural_sync` | Sync procedural rules with Persona MCP via shared bridge file (`~/.claude/procedural-bridge.json`). Supports export, import, or bidirectional sync. |
 
 ### Import & Extraction
 
@@ -316,23 +346,34 @@ This copies command files to `~/.claude/commands/` where Claude Code picks them 
 
 ```
 Conversations --> Extract --> LanceDB (vectors + metadata)
+                    |                       |
+              KG Auto-Populate   +----------+----------+
+              (12 rel types)     |          |          |
+                            Vector ANN  IDF Keywords  Time Windows
+                                 |          |          |
+                                 +----+-----+-----+----+
+                                      |           |
+                                 KG Temporal   Spreading
+                                   Lookup     Activation
+                                      |           |
+                                      +-----+-----+
+                                            |
+                                      Score + Rank
+                                            |
+                                    Token Budget Cap
+                                            |
+                                   Governance Checks
+                                   (advisory, async)
+                                            |
+                                   Format for Prompt
+
+                         Adaptive Forgetting
+                    (semantic proximity modulates decay)
                                   |
-                    +-------------+-------------+
-                    |             |             |
-               Vector ANN   IDF Keywords   Time Windows
-                    |             |             |
-                    +------+------+------+------+
-                           |             |
-                      KG Temporal    Spreading
-                        Lookup      Activation
-                           |             |
-                           +------+------+
-                                  |
-                           Score + Rank
-                                  |
-                         Token Budget Cap
-                                  |
-                       Format for Prompt
+              Persona Bridge <--> Procedural Rules
+              (emotion-weighted    (confidence-scored,
+               importance,          learned from
+               cognitive load)      corrections)
 ```
 
 ### Data Storage
@@ -421,7 +462,13 @@ Here's why the combo matters. Engram will learn that you prefer TypeScript over 
 
 Persona tracks behavioral signals (corrections, approvals, frustrations, praise) and builds a communication profile that adapts over time. Engram's procedural rules overlap a little here ("never use em-dashes"), but Persona goes deeper into *how* the agent should talk to you specifically. Things like matching your energy level, knowing when to be terse vs. when to elaborate, and adjusting formality based on the topic.
 
-When both servers are running, Engram's system prompt instructions tell the agent to proactively record persona signals as it observes them. The agent calls `persona_signal` when it notices corrections, approvals, or style preferences, and calls `persona_context` at the start of complex interactions to calibrate its responses. No extra configuration needed. They just find each other through the MCP protocol.
+When both servers are running, they coordinate through three mechanisms:
+
+1. **Emotion-weighted memory importance.** Engram calls `persona_state` during ingestion to get the current emotional valence and arousal. High-arousal negative emotions boost memory importance by up to 30%. A frustrated correction gets remembered more strongly than a neutral fact.
+
+2. **Cognitive-load-gated search.** When Persona detects cognitive overload, Engram's `memory_search` receives the load signal and returns only the top 3 high-importance memories instead of the full result set. Less noise when you're already overwhelmed.
+
+3. **Procedural bridge.** Engram's learned rules (from corrections and instructions) and Persona's applied evolution proposals sync through a shared bridge file at `~/.claude/procedural-bridge.json`. Engram rules become Persona proposals. Persona's applied proposals reinforce or create Engram rules. The bridge auto-syncs during `persona_consolidate`.
 
 You can run Engram without Persona and it works fine. But if you want an AI that actually feels like it knows you, not just what you've told it, but how you like to be talked to, run both.
 
