@@ -1,4 +1,4 @@
-import type { SmartMemoryConfig, MemoryType, CognitiveLayer } from './types.js';
+import type { SmartMemoryConfig, MemoryType, CognitiveLayer, Sentiment } from './types.js';
 import type { StoredChunk } from './storage.js';
 import { Storage } from './storage.js';
 /**
@@ -19,6 +19,9 @@ export interface IngestEntry {
     source?: string;
     domain?: string;
     topic?: string;
+    sentiment?: Sentiment;
+    emotionalValence?: number;
+    emotionalArousal?: number;
 }
 /**
  * Immediately persist one or more memory entries.

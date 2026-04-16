@@ -15,6 +15,16 @@ export async function ingest(config, storage, entries) {
         const trimmedContent = entry.content.trim();
         const baseType = entry.type ?? inferType(trimmedContent);
         const baseLayer = entry.layer ?? inferLayer(trimmedContent);
+        // Emotion-weighted importance: high-arousal events get stronger encoding
+        // Matches amygdala research — negative high-arousal memories form faster (0.8 LR)
+        // than positive ones (0.2 LR). Neutral emotions don't modify importance.
+        let effectiveImportance = entry.importance ?? 0.5;
+        if (entry.emotionalArousal !== undefined && entry.emotionalArousal > 0.3) {
+            const valence = entry.emotionalValence ?? 0;
+            // Negative-biased boost: negative emotions boost more than positive
+            const emotionBoost = entry.emotionalArousal * (valence < 0 ? 0.3 : 0.15);
+            effectiveImportance = Math.min(1, effectiveImportance + emotionBoost);
+        }
         const baseMeta = {
             tier: 'short-term',
             type: baseType,
@@ -23,8 +33,8 @@ export async function ingest(config, storage, entries) {
             domain: entry.domain ?? '',
             topic: entry.topic ?? '',
             source: entry.source ?? `wal:${Date.now()}`,
-            importance: entry.importance ?? 0.5,
-            sentiment: 'neutral',
+            importance: effectiveImportance,
+            sentiment: entry.sentiment ?? 'neutral',
             createdAt: new Date().toISOString(),
             lastRecalledAt: null,
             recallCount: 0,

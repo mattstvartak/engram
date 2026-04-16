@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { SmartMemoryConfig, MemoryType, CognitiveLayer } from './types.js';
+import type { SmartMemoryConfig, MemoryType, CognitiveLayer, Sentiment } from './types.js';
 import type { StoredChunk } from './storage.js';
 import { Storage } from './storage.js';
 import { embed } from './llm.js';
@@ -26,6 +26,9 @@ export interface IngestEntry {
   source?: string;
   domain?: string;
   topic?: string;
+  sentiment?: Sentiment;
+  emotionalValence?: number;  // -1 (negative) to 1 (positive), from Persona bridge
+  emotionalArousal?: number;  // 0 to 1, from Persona bridge
 }
 
 /**
@@ -45,6 +48,17 @@ export async function ingest(
     const trimmedContent = entry.content.trim();
     const baseType = entry.type ?? inferType(trimmedContent);
     const baseLayer = entry.layer ?? inferLayer(trimmedContent);
+    // Emotion-weighted importance: high-arousal events get stronger encoding
+    // Matches amygdala research — negative high-arousal memories form faster (0.8 LR)
+    // than positive ones (0.2 LR). Neutral emotions don't modify importance.
+    let effectiveImportance = entry.importance ?? 0.5;
+    if (entry.emotionalArousal !== undefined && entry.emotionalArousal > 0.3) {
+      const valence = entry.emotionalValence ?? 0;
+      // Negative-biased boost: negative emotions boost more than positive
+      const emotionBoost = entry.emotionalArousal * (valence < 0 ? 0.3 : 0.15);
+      effectiveImportance = Math.min(1, effectiveImportance + emotionBoost);
+    }
+
     const baseMeta = {
       tier: 'short-term' as const,
       type: baseType,
@@ -53,8 +67,8 @@ export async function ingest(
       domain: entry.domain ?? '',
       topic: entry.topic ?? '',
       source: entry.source ?? `wal:${Date.now()}`,
-      importance: entry.importance ?? 0.5,
-      sentiment: 'neutral' as const,
+      importance: effectiveImportance,
+      sentiment: entry.sentiment ?? 'neutral' as Sentiment,
       createdAt: new Date().toISOString(),
       lastRecalledAt: null,
       recallCount: 0,

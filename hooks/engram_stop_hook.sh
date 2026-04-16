@@ -30,5 +30,5 @@ USER_MSG_COUNT=${USER_MSG_COUNT:-0}
 if [ "$USER_MSG_COUNT" -gt 0 ] && [ $((USER_MSG_COUNT % 10)) -eq 0 ]; then
   echo '{"decision":"block","reason":"🧠 AUTO-SAVE checkpoint (every 10 messages). Before continuing:\n1. Save key facts, decisions, and user preferences via memory_ingest\n2. Record any entity relationships via memory_kg_add\n3. Log persona_signal for any user reactions you observed\n\nDo this NOW, then continue with the task."}'
 else
-  echo '{"decision":"allow"}'
+  echo '{"decision":"approve"}'
 fi

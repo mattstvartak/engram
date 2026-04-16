@@ -87,16 +87,28 @@ server.registerTool(
       maxResults: z.number().min(1).max(50).optional().describe('Max results (default: 10).'),
       domain: z.string().optional().describe('Filter by domain/project.'),
       topic: z.string().optional().describe('Filter by topic.'),
+      cognitiveLoad: z.enum(['low', 'normal', 'high']).optional().describe('User cognitive load from Persona. "high" reduces results to top 3 high-importance memories. "low" allows full results.'),
     }),
   },
-  async ({ query, maxResults, domain, topic }) => {
+  async ({ query, maxResults, domain, topic, cognitiveLoad }) => {
+    // Cognitive-load gating: overloaded users get fewer, higher-quality results
+    let effectiveMaxResults = maxResults;
+    if (cognitiveLoad === 'high') {
+      effectiveMaxResults = Math.min(effectiveMaxResults ?? 10, 3);
+    }
     const storage = await ensureStorage();
-    const results = await search(config, storage, query, maxResults, { domain, topic });
+    const results = await search(config, storage, query, effectiveMaxResults, { domain, topic });
     let selected: typeof results;
     try {
       selected = await selectRelevant(config, query, results);
     } catch {
-      selected = results.slice(0, 5);
+      selected = results.slice(0, cognitiveLoad === 'high' ? 3 : 5);
+    }
+    // Under high cognitive load, prefer high-importance memories
+    if (cognitiveLoad === 'high' && selected.length > 3) {
+      selected = selected
+        .sort((a, b) => b.chunk.importance - a.chunk.importance)
+        .slice(0, 3);
     }
     return json({
       total: results.length,
@@ -152,9 +164,12 @@ server.registerTool(
       tags: z.string().optional().describe('Comma-separated tags.'),
       domain: z.string().optional().describe('Domain/project namespace.'),
       topic: z.string().optional().describe('Topic within the domain.'),
+      sentiment: z.enum(['frustrated', 'curious', 'satisfied', 'neutral', 'excited', 'confused']).optional().describe('Emotional sentiment from Persona bridge.'),
+      emotionalValence: z.number().min(-1).max(1).optional().describe('Emotional valence -1 (negative) to 1 (positive). From Persona. Boosts importance for emotionally charged memories.'),
+      emotionalArousal: z.number().min(0).max(1).optional().describe('Emotional arousal 0-1. From Persona. High-arousal memories get stronger encoding.'),
     }),
   },
-  async ({ content, type, importance, tags, domain, topic }) => {
+  async ({ content, type, importance, tags, domain, topic, sentiment, emotionalValence, emotionalArousal }) => {
     const storage = await ensureStorage();
     const chunks = await ingest(config, storage, [{
       content,
@@ -163,6 +178,9 @@ server.registerTool(
       tags: tags?.split(',').map(t => t.trim()),
       domain,
       topic,
+      sentiment: sentiment as any,
+      emotionalValence,
+      emotionalArousal,
     }]);
     return json({
       ingested: chunks.length,
