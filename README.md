@@ -260,23 +260,20 @@ Then point your MCP client at `dist/server.js`:
 
 ## Tools
 
-The MCP server exposes 23 tools organized into six groups.
+The MCP server exposes 16 tools across five groups. Several earlier tools (`memory_format`, `memory_check_duplicate`, `memory_extract_rules`, `memory_taxonomy`, `memory_kg_stats`) were folded into their parent tools in 1.0.0-beta.6 — pass the relevant flag or mode to the parent instead.
 
 ### Core Memory
 
 | Tool | What it does |
 |------|-------------|
-| `memory_search` | Hybrid ANN + keyword search with spreading activation |
-| `memory_format` | Search and format memories for prompt injection |
-| `memory_ingest` | Write-ahead log: immediately persist a memory before responding |
-| `memory_extract` | Extract memories from a conversation (LLM or heuristic) |
-| `memory_check_duplicate` | Check if a memory already exists before ingesting |
-| `memory_maintain` | Run consolidation (decay, promote, link, merge) |
+| `memory_search` | Hybrid ANN + keyword search with spreading activation. Supports a formatted output mode for prompt injection (replaces the old `memory_format`). |
+| `memory_ingest` | Write-ahead log: immediately persist a memory before responding. Runs duplicate detection inline (replaces `memory_check_duplicate`). |
+| `memory_extract` | Extract memories from a conversation (LLM or heuristic). Rules-only mode replaces the old `memory_extract_rules`. |
+| `memory_maintain` | Run consolidation (decay, promote, link, merge). Also auto-syncs the Persona procedural bridge when both servers are running. |
 | `memory_rules` | Show active procedural rules |
 | `memory_outcome` | Record recall feedback (helpful/corrected/irrelevant) |
 | `memory_session` | Manage session state (hot RAM scratchpad) |
-| `memory_stats` | Memory statistics by tier, layer, type |
-| `memory_taxonomy` | Domain/topic hierarchy with counts |
+| `memory_stats` | Memory statistics by tier, layer, type. Includes KG stats and domain/topic taxonomy (replaces `memory_kg_stats` and `memory_taxonomy`). |
 
 ### Knowledge Graph
 
@@ -286,7 +283,6 @@ The MCP server exposes 23 tools organized into six groups.
 | `memory_kg_query` | Query triples with optional filters |
 | `memory_kg_invalidate` | Mark a fact as no longer valid |
 | `memory_kg_timeline` | Get chronological history of an entity |
-| `memory_kg_stats` | Knowledge graph statistics |
 
 ### Diary
 
@@ -301,19 +297,11 @@ The MCP server exposes 23 tools organized into six groups.
 |------|-------------|
 | `memory_govern` | Run governance checks: contradiction detection (vector + heuristic + LLM), semantic drift monitoring, and memory poisoning detection. All advisory — flags issues without auto-deleting. |
 
-### Bridge
-
-| Tool | What it does |
-|------|-------------|
-| `memory_procedural_sync` | Sync procedural rules with Persona MCP via shared bridge file (`~/.claude/procedural-bridge.json`). Supports export, import, or bidirectional sync. |
-
-### Import & Extraction
+### Import
 
 | Tool | What it does |
 |------|-------------|
 | `memory_import` | Bulk import from Claude Code JSONL, ChatGPT JSON, or plain text |
-| `memory_extract_rules` | Analyze a conversation for procedural rules |
-| `memory_mem0_sync` | Sync Mem0 cloud memories to local store |
 
 ## Slash Commands
 
@@ -325,6 +313,7 @@ These work in any MCP-compatible client (Claude Code, Cursor, etc.). The MCP ser
 | `/recall <query>` | Search memories using the full hybrid pipeline (vector + keyword + temporal + KG + spreading activation). Results presented conversationally. |
 | `/forget <what>` | Find and remove or correct specific memories. Shows matches and confirms before acting. |
 | `/memory-health [maintain]` | Show memory system stats (tiers, layers, rules, KG size). With "maintain", runs the full consolidation cycle. |
+| `/memory-api <key>` | Set or update the OpenRouter API key that unlocks LLM extraction, reranking, and procedural-rule learning. |
 | `/knowledge <subcommand>` | Knowledge graph operations. Subcommands: `timeline <entity>`, `about <entity>`, `add <s> <p> <o>`, `correct <s> <p>`, `stats`. |
 | `/memory <subcommand>` | Quick ops. Subcommands: `save <content>`, `diary [date]`, `diary write <entry>`, `import <source>`, `rules`, `session [show\|clear]`. |
 
