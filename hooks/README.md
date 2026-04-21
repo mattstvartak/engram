@@ -12,10 +12,16 @@ Fires after every assistant turn. Every 10 user messages, **blocks** Claude from
 - Context-pressure self-check via `memory_context_pressure` — if hot/critical, it must write a handoff note and `/compact` early rather than riding the window to the edge.
 
 ### `engram_precompact_hook.sh` (PreCompact event)
-Fires before context window compression. **Always blocks.** This is the safety net — context compaction is irreversible, and if the window fills before this fires the user has to abandon the chat.
+Fires before context window compression. Context compaction is irreversible, and if the window fills before this fires the user has to abandon the chat — so the hook enforces a save-then-compact sequence.
 
-The hook enforces a strict sequence:
-1. `memory_handoff_write` — structured "where we left off" snapshot (currentTask, nextSteps, fileRefs, openQuestions, decisions, notes). This is the lifeline if compaction fails: a fresh session picks up via `memory_handoff_read`.
+**Two-phase block-then-approve flow:**
+- **First `/compact` attempt:** if no fresh compact-reason handoff exists, **blocks** with the strict checklist below.
+- **Second `/compact` attempt:** once Claude has called `memory_handoff_write` with `reason="compact"`, the hook recognizes the fresh handoff (within `ENGRAM_PRECOMPACT_WINDOW_SEC`, default 300s) and **approves** automatically. No further user intervention beyond re-running `/compact`.
+
+This avoids the infinite-block loop a naive "always block" hook creates: Claude writes the handoff, the user re-invokes `/compact`, and compaction proceeds. Tune the window with `ENGRAM_PRECOMPACT_WINDOW_SEC` (in seconds).
+
+The required save sequence (enforced on the first attempt):
+1. `memory_handoff_write` — structured "where we left off" snapshot (currentTask, nextSteps, fileRefs, openQuestions, decisions, notes). This is the lifeline if compaction fails: a fresh session picks up via `memory_handoff_read`. Set `reason="compact"` so the hook recognizes it on retry.
 2. `memory_ingest` / `memory_kg_add` / `memory_diary_write` — persist facts, relationships, and a narrative summary.
 3. `persona_signal` — flush any pending user-reaction signals.
 
