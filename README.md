@@ -163,11 +163,25 @@ Inspired by [FadeMem (Jan 2026)](https://arxiv.org/abs/2501.xxxxx). Standard FSR
 
 Adaptive forgetting modulates the decay rate based on semantic proximity to recently recalled memories. If a memory's nearest neighbors are getting recalled, it decays slower. If nothing nearby is ever accessed, it fades faster. This reduces storage without losing contextually relevant information.
 
+### Self-Organizing Memories
+
+During consolidation, the system does two passes of housekeeping beyond decay and promotion. First, any memory missing a short description gets one auto-generated from its content, which makes it easier to surface in summaries and the knowledge graph. Second, the consolidator scans for semantically related memories that aren't yet linked and generates cross-links between them, so spreading activation has more edges to traverse the next time a query comes in. The graph densifies passively as the store grows.
+
 ### Duplicate Detection and Merging
 
 New memories get checked against existing ones using Jaccard similarity on word sets (threshold 0.75). If a duplicate is found, it doesn't get stored.
 
 During consolidation, the system also scans for near-duplicates using cosine similarity on embeddings (threshold 0.9). When found, the higher-importance memory absorbs the other's recall count and the duplicate gets deleted.
+
+### Handoff Protocol
+
+Context compaction is irreversible, and if the window fills completely before compaction runs the user has to abandon the chat. Engram treats this as a first-class failure mode and ships three tools that mechanize the fix:
+
+- `memory_handoff_write` persists a structured "where we left off" snapshot to `handoffs/YYYY-MM-DD_HH-MM-SS.{json,md}` — currentTask, completed, nextSteps, openQuestions, file references, decisions, and free-form notes. The JSON half is for programmatic resume; the markdown half is for humans.
+- `memory_handoff_read` loads the latest handoff (or a specific one by stamp). Agents call it at session start to pick up from exactly where the previous session stopped.
+- `memory_context_pressure` is a self-nudge: the agent reports its own pressure level (`ok`/`warm`/`hot`/`critical`) and gets back a deterministic action plan — when to save, when to write the handoff, when to compact early rather than riding the window to the edge.
+
+The bundled `engram_precompact_hook.sh` makes the write mandatory: it **blocks** compaction until `memory_handoff_write` has been called with `reason=compact`. Save constantly, compact at natural phase boundaries, and the next session starts with a full picture regardless of what happened in the previous one.
 
 ## Compatibility
 
@@ -260,7 +274,7 @@ Then point your MCP client at `dist/server.js`:
 
 ## Tools
 
-The MCP server exposes 16 tools across five groups. Several earlier tools (`memory_format`, `memory_check_duplicate`, `memory_extract_rules`, `memory_taxonomy`, `memory_kg_stats`) were folded into their parent tools in 1.0.0-beta.6 — pass the relevant flag or mode to the parent instead.
+The MCP server exposes 19 tools across six groups. Several earlier tools (`memory_format`, `memory_check_duplicate`, `memory_extract_rules`, `memory_taxonomy`, `memory_kg_stats`) were folded into their parent tools in 1.0.0-beta.6 — pass the relevant flag or mode to the parent instead. 1.0.0-beta.8 adds the Handoff tools for cross-session continuity.
 
 ### Core Memory
 
@@ -269,11 +283,11 @@ The MCP server exposes 16 tools across five groups. Several earlier tools (`memo
 | `memory_search` | Hybrid ANN + keyword search with spreading activation. Supports a formatted output mode for prompt injection (replaces the old `memory_format`). |
 | `memory_ingest` | Write-ahead log: immediately persist a memory before responding. Runs duplicate detection inline (replaces `memory_check_duplicate`). |
 | `memory_extract` | Extract memories from a conversation (LLM or heuristic). Rules-only mode replaces the old `memory_extract_rules`. |
-| `memory_maintain` | Run consolidation (decay, promote, link, merge). Also auto-syncs the Persona procedural bridge when both servers are running. |
+| `memory_maintain` | Run consolidation (decay, promote, link, merge, self-organize). Auto-describes unnamed memories, generates cross-links, and syncs the Persona procedural bridge when both servers are running. |
 | `memory_rules` | Show active procedural rules |
 | `memory_outcome` | Record recall feedback (helpful/corrected/irrelevant) |
 | `memory_session` | Manage session state (hot RAM scratchpad) |
-| `memory_stats` | Memory statistics by tier, layer, type. Includes KG stats and domain/topic taxonomy (replaces `memory_kg_stats` and `memory_taxonomy`). |
+| `memory_stats` | Memory statistics by tier, layer, type. Includes KG stats, domain/topic taxonomy, and Persona bridge status (replaces `memory_kg_stats` and `memory_taxonomy`). |
 
 ### Knowledge Graph
 
@@ -290,6 +304,14 @@ The MCP server exposes 16 tools across five groups. Several earlier tools (`memo
 |------|-------------|
 | `memory_diary_write` | Write a session diary entry |
 | `memory_diary_read` | Read diary entries by date or range |
+
+### Handoff (cross-session continuity)
+
+| Tool | What it does |
+|------|-------------|
+| `memory_handoff_write` | Structured "where we left off" snapshot — currentTask, completed, nextSteps, openQuestions, fileRefs, decisions, notes. Written before compaction or session end so a fresh session can resume without re-explanation. |
+| `memory_handoff_read` | Load the latest handoff (or one by stamp; `list=true` for recent stamps). Call at session start to pick up where the prior session left off. |
+| `memory_context_pressure` | Self-assess context window pressure (`ok`/`warm`/`hot`/`critical`) and receive a deterministic action plan — when to save memories, when to write a handoff, when to invoke `/compact`. |
 
 ### Governance
 
@@ -374,6 +396,9 @@ Everything lives locally:
 ├── SESSION-STATE.md      # Hot RAM scratchpad
 ├── diary/                # Daily diary entries
 │   └── YYYY-MM-DD.md
+├── handoffs/             # Cross-session "where we left off" snapshots
+│   ├── YYYY-MM-DD_HH-MM-SS.json
+│   └── YYYY-MM-DD_HH-MM-SS.md
 └── lance/                # LanceDB tables
     ├── chunks.lance/     # Memory chunks with embeddings
     ├── daily_logs.lance/ # Extraction logs

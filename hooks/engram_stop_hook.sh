@@ -39,7 +39,7 @@ USER_MSG_COUNT=${USER_MSG_COUNT:-0}
 
 # Every 10 user messages, block and require saves
 if [ "$USER_MSG_COUNT" -gt 0 ] && [ $((USER_MSG_COUNT % 10)) -eq 0 ]; then
-  echo '{"decision":"block","reason":"🧠 AUTO-SAVE checkpoint (every 10 messages). Before continuing:\n1. Save key facts, decisions, and user preferences via memory_ingest\n2. Record any entity relationships via memory_kg_add\n3. Log persona_signal for any user reactions you observed\n\nDo this NOW, then continue with the task."}'
+  echo '{"decision":"block","reason":"🧠 AUTO-SAVE checkpoint (every 10 messages). Before continuing:\n1. memory_ingest: Save key facts, decisions, user preferences from this session\n2. memory_kg_add: Record any new entity relationships\n3. persona_signal: Log any user-reaction signals you observed\n4. memory_context_pressure: Self-check level. If hot/critical → memory_handoff_write NOW and invoke /compact early — do NOT wait for the window to fill.\n\nDo this NOW, then continue with the task."}'
 else
   echo '{"decision":"approve"}'
 fi

@@ -18,6 +18,8 @@ import { writeDiaryEntry, readDiary, listDiaryDates } from './diary.js';
 import { importConversation } from './importer.js';
 import { runGovernanceCheck, detectContradictions } from './governance.js';
 import { syncBridge, loadBridgeFile } from './procedural-bridge.js';
+import { writeHandoff, readHandoff, listHandoffs } from './handoff.js';
+import { assessPressure } from './context-pressure.js';
 // ── Config & Storage ────────────────────────────────────────────────
 const config = loadConfig();
 let _storage = null;
@@ -33,12 +35,21 @@ async function ensureStorage() {
 function text(t) { return { content: [{ type: 'text', text: t }] }; }
 function json(data) { return text(JSON.stringify(data, null, 2)); }
 // ── MCP Server ──────────────────────────────────────────────────────
-const server = new McpServer({ name: 'engram', version: '2.1.0' }, {
+const server = new McpServer({ name: 'engram', version: '2.2.0' }, {
     instructions: [
         'Engram is your long-term memory.',
         '',
         'Save what matters: memory_ingest for facts/preferences/decisions, memory_kg_add for relationships, memory_diary_write at session end.',
         'Before answering about prior conversations: memory_search first.',
+        '',
+        '## Handoff protocol (MANDATORY)',
+        'Context compaction can fail if the window fills completely. When that happens, the user has to abandon the chat. Never let this happen.',
+        '',
+        '1. Save memories continuously with memory_ingest — never batch.',
+        '2. At session start, call memory_handoff_read to resume where the prior session left off.',
+        '3. When context feels heavy (long tool outputs, many file reads, extended work) call memory_context_pressure with your honest level assessment. Follow the returned actionPlan.',
+        '4. BEFORE invoking /compact — or before session end — call memory_handoff_write with a full "where we left off" snapshot: currentTask, completed, nextSteps, openQuestions, fileRefs (path:line), decisions, notes. This is the lifeline if compaction fails.',
+        '5. Do not wait for the system to auto-compact. Compact early, while there is still headroom for the handoff.',
         '',
         'If persona MCP available: call persona_signal on user reactions (correction, approval, frustration, praise, etc).',
     ].join('\n'),
@@ -432,6 +443,71 @@ server.registerTool('memory_diary_read', {
 }, async ({ date, daysBack, agent }) => {
     const entries = readDiary(config.dataDir, { date, daysBack, agent });
     return json(entries);
+});
+// ─────────────────────────────────────────────────────────────────────
+// HANDOFF TOOLS — cross-session "where we left off" lifeline
+// ─────────────────────────────────────────────────────────────────────
+server.registerTool('memory_handoff_write', {
+    title: 'Write Handoff Note',
+    description: 'Write a structured "where we left off" snapshot. Call BEFORE /compact, before session end, or when context_pressure returns hot/critical. This is the lifeline if the context window fills before compaction runs. Fields: currentTask, completed, nextSteps, openQuestions, fileRefs, decisions, notes.',
+    inputSchema: z.object({
+        currentTask: z.string().describe('One-sentence description of what you are working on.'),
+        reason: z.enum(['compact', 'session-end', 'manual', 'context-pressure']).optional().describe('Why this handoff is being written (default: manual).'),
+        sessionId: z.string().optional().describe('Session/conversation ID for cross-referencing.'),
+        completed: z.string().optional().describe('Comma-separated list of what has been completed this session.'),
+        nextSteps: z.string().optional().describe('Comma-separated concrete next actions to take on resume.'),
+        openQuestions: z.string().optional().describe('Comma-separated unresolved questions or blockers.'),
+        fileRefs: z.string().optional().describe('Comma-separated file paths (ideally path:line) the next agent needs.'),
+        decisions: z.string().optional().describe('Comma-separated key decisions made this session.'),
+        notes: z.string().optional().describe('Free-form additional context, quirks, gotchas.'),
+    }),
+}, async ({ currentTask, reason, sessionId, completed, nextSteps, openQuestions, fileRefs, decisions, notes }) => {
+    const splitCsv = (s) => s ? s.split(',').map(x => x.trim()).filter(Boolean) : [];
+    const note = writeHandoff(config.dataDir, {
+        sessionId: sessionId ?? null,
+        reason: reason ?? 'manual',
+        currentTask,
+        completed: splitCsv(completed),
+        nextSteps: splitCsv(nextSteps),
+        openQuestions: splitCsv(openQuestions),
+        fileRefs: splitCsv(fileRefs),
+        decisions: splitCsv(decisions),
+        notes: notes ?? '',
+    });
+    return json({
+        written: true,
+        timestamp: note.timestamp,
+        reason: note.reason,
+        summary: note.currentTask,
+    });
+});
+server.registerTool('memory_handoff_read', {
+    title: 'Read Handoff Note',
+    description: 'Read the most recent handoff note (or a specific one by stamp). Call this at the start of every session to resume where the last one left off. Set list=true to get recent handoff stamps instead of a single note.',
+    inputSchema: z.object({
+        stamp: z.string().optional().describe('Handoff stamp to load (e.g. "2026-04-20_14-32-05"). If omitted, returns the latest.'),
+        list: z.boolean().optional().describe('If true, list recent handoff stamps instead of loading a note.'),
+        limit: z.number().min(1).max(50).optional().describe('For list mode: max stamps to return (default 10).'),
+    }),
+}, async ({ stamp, list, limit }) => {
+    if (list) {
+        return json({ handoffs: listHandoffs(config.dataDir, limit ?? 10) });
+    }
+    const note = readHandoff(config.dataDir, stamp);
+    if (!note) {
+        return json({ found: false, message: 'No handoff note available.' });
+    }
+    return json({ found: true, ...note });
+});
+server.registerTool('memory_context_pressure', {
+    title: 'Context Pressure Check',
+    description: 'Self-assess context window pressure and get an action plan. Call periodically during long sessions — especially after big tool outputs, many file reads, or when responses feel sluggish. Levels: ok, warm, hot, critical. Returns an ordered actionPlan telling you exactly what to do (save memories, write handoff, compact).',
+    inputSchema: z.object({
+        level: z.enum(['ok', 'warm', 'hot', 'critical']).describe('Your honest assessment of current context pressure.'),
+        reason: z.string().optional().describe('What triggered this check (e.g. "long file reads", "extended session", "near token limit").'),
+    }),
+}, async ({ level, reason }) => {
+    return json(assessPressure(level, reason ?? ''));
 });
 // ─────────────────────────────────────────────────────────────────────
 // IMPORT

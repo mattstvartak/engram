@@ -7,11 +7,17 @@ Claude Code hooks that mechanically enforce memory saves. Without these, Claude 
 ### `engram_stop_hook.sh` (Stop event)
 Fires after every assistant turn. Every 10 user messages, **blocks** Claude from continuing until it saves:
 - Key facts and decisions via `memory_ingest`
-- Entity relationships via `memory_kg_add`  
+- Entity relationships via `memory_kg_add`
 - Persona signals via `persona_signal`
+- Context-pressure self-check via `memory_context_pressure` — if hot/critical, it must write a handoff note and `/compact` early rather than riding the window to the edge.
 
 ### `engram_precompact_hook.sh` (PreCompact event)
-Fires before context window compression. **Always blocks.** This is the safety net — context compaction is irreversible. Forces Claude to save everything important before memories are lost.
+Fires before context window compression. **Always blocks.** This is the safety net — context compaction is irreversible, and if the window fills before this fires the user has to abandon the chat.
+
+The hook enforces a strict sequence:
+1. `memory_handoff_write` — structured "where we left off" snapshot (currentTask, nextSteps, fileRefs, openQuestions, decisions, notes). This is the lifeline if compaction fails: a fresh session picks up via `memory_handoff_read`.
+2. `memory_ingest` / `memory_kg_add` / `memory_diary_write` — persist facts, relationships, and a narrative summary.
+3. `persona_signal` — flush any pending user-reaction signals.
 
 ## Installation
 
