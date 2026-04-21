@@ -48,8 +48,9 @@ const server = new McpServer({ name: 'engram', version: '2.2.0' }, {
         '1. Save memories continuously with memory_ingest — never batch.',
         '2. At session start, call memory_handoff_read to resume where the prior session left off.',
         '3. When context feels heavy (long tool outputs, many file reads, extended work) call memory_context_pressure with your honest level assessment. Follow the returned actionPlan.',
-        '4. BEFORE invoking /compact — or before session end — call memory_handoff_write with a full "where we left off" snapshot: currentTask, completed, nextSteps, openQuestions, fileRefs (path:line), decisions, notes. This is the lifeline if compaction fails.',
-        '5. Do not wait for the system to auto-compact. Compact early, while there is still headroom for the handoff.',
+        '4. At NATURAL PHASE BOUNDARIES (task done, pivoting focus, finishing a subsystem, user says "ok next let\'s…") call memory_context_pressure with phaseBoundary=true and compact. Pivots thrash the cache anyway — compacting at the boundary is a free lunch, carrying verbose tool output from the old phase into the new one is not.',
+        '5. BEFORE invoking /compact — or before session end — call memory_handoff_write with a full "where we left off" snapshot: currentTask, completed, nextSteps, openQuestions, fileRefs (path:line), decisions, notes. This is the lifeline if compaction fails.',
+        '6. Do not wait for the system to auto-compact. Compact early, while there is still headroom for the handoff.',
         '',
         'If persona MCP available: call persona_signal on user reactions (correction, approval, frustration, praise, etc).',
     ].join('\n'),
@@ -501,13 +502,14 @@ server.registerTool('memory_handoff_read', {
 });
 server.registerTool('memory_context_pressure', {
     title: 'Context Pressure Check',
-    description: 'Self-assess context window pressure and get an action plan. Call periodically during long sessions — especially after big tool outputs, many file reads, or when responses feel sluggish. Levels: ok, warm, hot, critical. Returns an ordered actionPlan telling you exactly what to do (save memories, write handoff, compact).',
+    description: 'Self-assess context window pressure and get an action plan. Call periodically during long sessions — especially after big tool outputs, many file reads, or when responses feel sluggish. Levels: ok, warm, hot, critical. Also call with phaseBoundary=true at natural phase boundaries (task complete, pivoting focus, finishing a subsystem) — pivots thrash the cache anyway, so that is the RIGHT moment to compact. Returns an ordered actionPlan telling you exactly what to do (save memories, write handoff, compact).',
     inputSchema: z.object({
         level: z.enum(['ok', 'warm', 'hot', 'critical']).describe('Your honest assessment of current context pressure.'),
-        reason: z.string().optional().describe('What triggered this check (e.g. "long file reads", "extended session", "near token limit").'),
+        reason: z.string().optional().describe('What triggered this check (e.g. "long file reads", "extended session", "near token limit", "phase complete").'),
+        phaseBoundary: z.boolean().optional().describe('True when a task/phase just finished or you are about to pivot focus. Forces the action plan toward a proactive compact, even at ok/warm levels.'),
     }),
-}, async ({ level, reason }) => {
-    return json(assessPressure(level, reason ?? ''));
+}, async ({ level, reason, phaseBoundary }) => {
+    return json(assessPressure(level, reason ?? '', phaseBoundary ?? false));
 });
 // ─────────────────────────────────────────────────────────────────────
 // IMPORT

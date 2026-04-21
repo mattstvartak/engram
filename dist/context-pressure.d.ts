@@ -12,6 +12,8 @@
  */
 export interface PressureSignal {
     level: 'ok' | 'warm' | 'hot' | 'critical';
+    /** Whether this check was triggered by a natural phase boundary (task done, pivoting focus) */
+    phaseBoundary: boolean;
     /** Heuristic reason the caller gave (e.g., "long tool outputs", "many file reads") */
     reason: string;
     /** Ordered steps the agent should take before anything else */
@@ -19,4 +21,4 @@ export interface PressureSignal {
     /** Terse reminder suitable for prompt-injection */
     reminder: string;
 }
-export declare function assessPressure(level: PressureSignal['level'], reason?: string): PressureSignal;
+export declare function assessPressure(level: PressureSignal['level'], reason?: string, phaseBoundary?: boolean): PressureSignal;

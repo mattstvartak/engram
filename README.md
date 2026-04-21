@@ -179,7 +179,7 @@ Context compaction is irreversible, and if the window fills completely before co
 
 - `memory_handoff_write` persists a structured "where we left off" snapshot to `handoffs/YYYY-MM-DD_HH-MM-SS.{json,md}` — currentTask, completed, nextSteps, openQuestions, file references, decisions, and free-form notes. The JSON half is for programmatic resume; the markdown half is for humans.
 - `memory_handoff_read` loads the latest handoff (or a specific one by stamp). Agents call it at session start to pick up from exactly where the previous session stopped.
-- `memory_context_pressure` is a self-nudge: the agent reports its own pressure level (`ok`/`warm`/`hot`/`critical`) and gets back a deterministic action plan — when to save, when to write the handoff, when to compact early rather than riding the window to the edge.
+- `memory_context_pressure` is a self-nudge: the agent reports its own pressure level (`ok`/`warm`/`hot`/`critical`) and gets back a deterministic action plan — when to save, when to write the handoff, when to compact early rather than riding the window to the edge. Passing `phaseBoundary=true` (task complete, pivoting focus, finishing a subsystem) overrides level and forces a proactive compact; the reasoning is that pivots thrash Anthropic's 5-minute prompt cache anyway, so eating that miss at the boundary is effectively free and avoids carrying the verbose tool output of the finished phase into the next one.
 
 The bundled `engram_precompact_hook.sh` makes the write mandatory: it **blocks** compaction until `memory_handoff_write` has been called with `reason=compact`. Save constantly, compact at natural phase boundaries, and the next session starts with a full picture regardless of what happened in the previous one.
 
@@ -311,7 +311,7 @@ The MCP server exposes 19 tools across six groups. Several earlier tools (`memor
 |------|-------------|
 | `memory_handoff_write` | Structured "where we left off" snapshot — currentTask, completed, nextSteps, openQuestions, fileRefs, decisions, notes. Written before compaction or session end so a fresh session can resume without re-explanation. |
 | `memory_handoff_read` | Load the latest handoff (or one by stamp; `list=true` for recent stamps). Call at session start to pick up where the prior session left off. |
-| `memory_context_pressure` | Self-assess context window pressure (`ok`/`warm`/`hot`/`critical`) and receive a deterministic action plan — when to save memories, when to write a handoff, when to invoke `/compact`. |
+| `memory_context_pressure` | Self-assess context window pressure (`ok`/`warm`/`hot`/`critical`) and receive a deterministic action plan — when to save memories, when to write a handoff, when to invoke `/compact`. Pass `phaseBoundary=true` at natural task/phase boundaries to force a proactive compact regardless of level (pivots thrash the cache anyway — compacting at the boundary is a free lunch). |
 
 ### Governance
 
