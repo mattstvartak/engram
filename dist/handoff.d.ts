@@ -36,9 +36,6 @@ export interface HandoffNote {
  * Write a handoff note. Persists BOTH JSON (machine-readable) and markdown (human-readable).
  */
 export declare function writeHandoff(dataDir: string, note: Omit<HandoffNote, 'timestamp'>): HandoffNote;
-/**
- * Read the most recent handoff, or a specific one by stamp.
- */
 export declare function readHandoff(dataDir: string, stamp?: string): HandoffNote | null;
 /**
  * List handoff stamps, newest first.

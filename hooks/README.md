@@ -1,29 +1,30 @@
 # Engram Auto-Save Hooks
 
-Claude Code hooks that mechanically enforce memory saves. Without these, Claude relies on instructions alone — which it often ignores when focused on coding tasks.
+Claude Code hooks that keep memory saves and handoff lifelines flowing without blocking the assistant. The goal is simple: **context-full should never be a dead-end** — a fresh handoff is always on disk, and `/compact` always succeeds.
 
 ## What they do
 
 ### `engram_stop_hook.sh` (Stop event)
-Fires after every assistant turn. Every 10 user messages, **blocks** Claude from continuing until it saves:
-- Key facts and decisions via `memory_ingest`
-- Entity relationships via `memory_kg_add`
-- Persona signals via `persona_signal`
-- Context-pressure self-check via `memory_context_pressure` — if hot/critical, it must write a handoff note and `/compact` early rather than riding the window to the edge.
+Fires after every assistant turn. **Non-blocking.** On each turn it:
+
+- Parses the Claude Code transcript
+- Extracts recent file reads/writes, commits, and the current task
+- Overwrites a rolling `session-checkpoint.json` in the handoff dir
+
+If the window fills so fast that `/compact` can't rescue it, the checkpoint is the lifeline. Cheap (single transcript read, no LLM), quiet (no block), and always fresh.
 
 ### `engram_precompact_hook.sh` (PreCompact event)
-Fires before context window compression. Context compaction is irreversible, and if the window fills before this fires the user has to abandon the chat — so the hook enforces a save-then-compact sequence.
+Fires before context compression — on both manual `/compact` and Claude Code's auto-compact. **Always approves.** The hook's job is to make sure a real handoff exists when compaction fires:
 
-**Two-phase block-then-approve flow:**
-- **First `/compact` attempt:** if no fresh compact-reason handoff exists, **blocks** with the strict checklist below.
-- **Second `/compact` attempt:** once Claude has called `memory_handoff_write` with `reason="compact"`, the hook recognizes the fresh handoff (within `ENGRAM_PRECOMPACT_WINDOW_SEC`, default 300s) and **approves** automatically. No further user intervention beyond re-running `/compact`.
+1. If Claude already called `memory_handoff_write` with `reason="compact"` within the last `ENGRAM_PRECOMPACT_WINDOW_SEC` seconds (default 300), reuse it.
+2. Otherwise, auto-generate one from the transcript — same mechanical extraction the Stop hook uses (current task, edited files, commits, last assistant note) — write it to the handoff dir, and approve.
 
-This avoids the infinite-block loop a naive "always block" hook creates: Claude writes the handoff, the user re-invokes `/compact`, and compaction proceeds. Tune the window with `ENGRAM_PRECOMPACT_WINDOW_SEC` (in seconds).
+No more block-then-approve loop: `/compact` "just works" in a single step, and when Claude Code auto-compacts, the lifeline still lands.
 
-The required save sequence (enforced on the first attempt):
-1. `memory_handoff_write` — structured "where we left off" snapshot (currentTask, nextSteps, fileRefs, openQuestions, decisions, notes). This is the lifeline if compaction fails: a fresh session picks up via `memory_handoff_read`. Set `reason="compact"` so the hook recognizes it on retry.
-2. `memory_ingest` / `memory_kg_add` / `memory_diary_write` — persist facts, relationships, and a narrative summary.
-3. `persona_signal` — flush any pending user-reaction signals.
+### Why this design
+- **Never block the assistant.** The old every-10-messages Stop block and the 2-phase PreCompact block-then-approve both interrupted flow. Claude's MCP instructions (SKILL.md) still push proactive `memory_ingest` / `memory_kg_add` / `memory_handoff_write` during the session — those produce the LLM-distilled memories. The hooks cover the mechanical fallback.
+- **Always produce a handoff.** Either Claude wrote one (good) or the hook wrote one (also good). Either way, `memory_handoff_read` returns something meaningful in the next session.
+- **Fail open.** If the extractor crashes, the hooks still approve. Stranding the user on a filesystem error would defeat the whole point.
 
 ## Installation
 
@@ -56,6 +57,7 @@ Add to your Claude Code settings (global `~/.claude/settings.json` or per-projec
 }
 ```
 
-## Why this matters
+## Tuning
 
-MemPalace (a competing memory MCP) uses identical hooks and achieves near-100% save compliance. Without hooks, Engram's "PROACTIVE STORAGE (critical)" instruction is just a suggestion that competes with task focus — save rate drops to ~30%.
+- `ENGRAM_DATA_DIR` — where handoffs are stored. Defaults to `$HOME/.claude/engram` (matches the MCP server).
+- `ENGRAM_PRECOMPACT_WINDOW_SEC` — freshness window for detecting a Claude-written compact handoff before auto-generating one. Default `300`.

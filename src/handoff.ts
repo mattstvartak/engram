@@ -74,18 +74,25 @@ export function writeHandoff(dataDir: string, note: Omit<HandoffNote, 'timestamp
 /**
  * Read the most recent handoff, or a specific one by stamp.
  */
+// Timestamped handoff filenames look like "2026-04-22_14-32-05-123Z" (what
+// stampFilename() produces). The rolling `session-checkpoint.json` written
+// by engram_stop_hook.sh does NOT match this shape, so it won't shadow real
+// handoffs when readHandoff() picks the latest.
+const STAMP_RE = /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/;
+
 export function readHandoff(dataDir: string, stamp?: string): HandoffNote | null {
   const dir = handoffDir(dataDir);
   if (!existsSync(dir)) return null;
 
   let targetStamp = stamp;
   if (!targetStamp) {
-    const files = readdirSync(dir)
-      .filter(f => f.endsWith('.json'))
-      .sort()
-      .reverse();
-    if (files.length === 0) return null;
-    targetStamp = files[0].replace(/\.json$/, '');
+    const allJson = readdirSync(dir).filter(f => f.endsWith('.json'));
+    const timestamped = allJson.filter(f => STAMP_RE.test(f)).sort().reverse();
+    // Prefer an explicitly-written, timestamped handoff; fall back to any
+    // other .json (e.g. the rolling session checkpoint) only if none exist.
+    const pick = timestamped[0] ?? allJson.sort().reverse()[0];
+    if (!pick) return null;
+    targetStamp = pick.replace(/\.json$/, '');
   }
 
   const path = handoffJsonPath(dataDir, targetStamp);
