@@ -11,6 +11,7 @@ export async function search(config, storage, query, maxResults, filters) {
         excludeTiers: ['archive'],
         domain: filters?.domain,
         topic: filters?.topic,
+        tag: filters?.tag,
     });
     if (allChunks.length === 0)
         return [];

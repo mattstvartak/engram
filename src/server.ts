@@ -93,17 +93,18 @@ server.registerTool(
       maxResults: z.number().min(1).max(50).optional().describe('Max results (default: 10).'),
       domain: z.string().optional().describe('Filter by domain/project.'),
       topic: z.string().optional().describe('Filter by topic.'),
+      tag: z.string().optional().describe('Filter by exact tag match. Consumer-defined (e.g. "cortex_type:action_item").'),
       cognitiveLoad: z.enum(['low', 'normal', 'high']).optional().describe('From Persona. "high" returns top 3 only.'),
       format: z.boolean().optional().describe('If true, returns formatted text grouped by cognitive layer instead of JSON.'),
     }),
   },
-  async ({ query, maxResults, domain, topic, cognitiveLoad, format: formatOutput }) => {
+  async ({ query, maxResults, domain, topic, tag, cognitiveLoad, format: formatOutput }) => {
     let effectiveMaxResults = maxResults;
     if (cognitiveLoad === 'high') {
       effectiveMaxResults = Math.min(effectiveMaxResults ?? 10, 3);
     }
     const storage = await ensureStorage();
-    const results = await search(config, storage, query, effectiveMaxResults, { domain, topic });
+    const results = await search(config, storage, query, effectiveMaxResults, { domain, topic, tag });
     let selected: typeof results;
     try {
       selected = await selectRelevant(config, query, results);
@@ -134,6 +135,9 @@ server.registerTool(
         tier: r.chunk.tier,
         domain: r.chunk.domain || undefined,
         topic: r.chunk.topic || undefined,
+        tags: r.chunk.tags.length > 0 ? r.chunk.tags : undefined,
+        source: r.chunk.source || undefined,
+        createdAt: r.chunk.createdAt || undefined,
         importance: r.chunk.importance,
         score: Math.round(r.score * 1000) / 1000,
       })),
@@ -145,35 +149,40 @@ server.registerTool(
   'memory_ingest',
   {
     title: 'Save Memory',
-    description: 'Save a fact, preference, decision, correction, or context to long-term memory. Auto-classifies type/tags if omitted. Auto-checks for duplicates before saving.',
+    description: 'Save a fact, preference, decision, correction, or context to long-term memory. Auto-classifies type/tags if omitted. Auto-checks for duplicates before saving unless skipDedupe=true.',
     inputSchema: z.object({
       content: z.string().describe('The memory to store.'),
       type: z.enum(['fact', 'preference', 'decision', 'context', 'correction']).optional().describe('Memory type.'),
       importance: z.number().min(0).max(1).optional().describe('Importance 0.0-1.0 (default: 0.5).'),
       tags: z.string().optional().describe('Comma-separated tags.'),
+      source: z.string().optional().describe('Source identifier (e.g. stable sourceId from an upstream system). Stored on the chunk and returned on search.'),
       domain: z.string().optional().describe('Domain/project namespace.'),
       topic: z.string().optional().describe('Topic within the domain.'),
       sentiment: z.enum(['frustrated', 'curious', 'satisfied', 'neutral', 'excited', 'confused']).optional().describe('Emotional sentiment from Persona.'),
       emotionalValence: z.number().min(-1).max(1).optional().describe('Emotional valence from Persona. Boosts importance for charged memories.'),
       emotionalArousal: z.number().min(0).max(1).optional().describe('Emotional arousal from Persona. High arousal = stronger encoding.'),
+      skipDedupe: z.boolean().optional().describe('If true, bypass the 0.75-similarity duplicate check. Use when the caller is writing structured refinements of prior memories (e.g. action items derived from a meeting note) and dedupe would swallow the write.'),
     }),
   },
-  async ({ content, type, importance, tags, domain, topic, sentiment, emotionalValence, emotionalArousal }) => {
+  async ({ content, type, importance, tags, source, domain, topic, sentiment, emotionalValence, emotionalArousal, skipDedupe }) => {
     const storage = await ensureStorage();
 
-    // Auto duplicate check (replaces old memory_check_duplicate tool)
-    const dupeResults = await search(config, storage, content, 5);
-    const similar = dupeResults.filter(r => r.score >= 0.75);
-    if (similar.length > 0) {
-      return json({
-        ingested: 0,
-        duplicate: true,
-        similar: similar.map(r => ({
-          id: r.chunk.id,
-          content: r.chunk.content,
-          score: Math.round(r.score * 1000) / 1000,
-        })),
-      });
+    // Auto duplicate check (replaces old memory_check_duplicate tool). Callers
+    // writing intentional refinements can bypass via skipDedupe=true.
+    if (!skipDedupe) {
+      const dupeResults = await search(config, storage, content, 5);
+      const similar = dupeResults.filter(r => r.score >= 0.75);
+      if (similar.length > 0) {
+        return json({
+          ingested: 0,
+          duplicate: true,
+          similar: similar.map(r => ({
+            id: r.chunk.id,
+            content: r.chunk.content,
+            score: Math.round(r.score * 1000) / 1000,
+          })),
+        });
+      }
     }
 
     const chunks = await ingest(config, storage, [{
@@ -181,6 +190,7 @@ server.registerTool(
       type: type as any,
       importance,
       tags: tags?.split(',').map(t => t.trim()),
+      ...(source ? { source } : {}),
       domain,
       topic,
       sentiment: sentiment as any,

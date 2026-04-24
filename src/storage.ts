@@ -180,6 +180,7 @@ export class Storage {
     cognitiveLayer?: string;
     domain?: string;
     topic?: string;
+    tag?: string;
   }): Promise<StoredChunk[]> {
     let q = this.chunks.query();
     const conditions: string[] = [];
@@ -200,6 +201,11 @@ export class Storage {
     }
     if (opts?.topic) {
       conditions.push(`topic = '${esc(opts.topic)}'`);
+    }
+    if (opts?.tag) {
+      // Tags are stored as a JSON array string like ["a","b","c"]. Match the
+      // wrapped form so "cortex:action" doesn't also hit "cortex:action_item".
+      conditions.push(`tags LIKE '%"${esc(opts.tag)}"%'`);
     }
 
     if (conditions.length > 0) {

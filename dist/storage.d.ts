@@ -23,6 +23,7 @@ export declare class Storage {
         cognitiveLayer?: string;
         domain?: string;
         topic?: string;
+        tag?: string;
     }): Promise<StoredChunk[]>;
     updateChunk(id: string, updates: Partial<StoredChunk>): Promise<void>;
     chunkCount(): Promise<number>;

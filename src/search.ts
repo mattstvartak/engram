@@ -14,13 +14,14 @@ export async function search(
   storage: Storage,
   query: string,
   maxResults?: number,
-  filters?: { domain?: string; topic?: string }
+  filters?: { domain?: string; topic?: string; tag?: string }
 ): Promise<SearchResult[]> {
   const limit = maxResults ?? config.maxRecallChunks;
   const allChunks = await storage.listChunks({
     excludeTiers: ['archive'],
     domain: filters?.domain,
     topic: filters?.topic,
+    tag: filters?.tag,
   });
   if (allChunks.length === 0) return [];
 

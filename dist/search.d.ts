@@ -7,6 +7,7 @@ import { Storage } from './storage.js';
 export declare function search(config: SmartMemoryConfig, storage: Storage, query: string, maxResults?: number, filters?: {
     domain?: string;
     topic?: string;
+    tag?: string;
 }): Promise<SearchResult[]>;
 export declare function selectRelevant(config: SmartMemoryConfig, query: string, candidates: SearchResult[]): Promise<SearchResult[]>;
 /**
