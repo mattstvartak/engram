@@ -15,6 +15,15 @@ export async function search(config, storage, query, maxResults, filters) {
     });
     if (allChunks.length === 0)
         return [];
+    // When a hard filter (tag/domain/topic) is supplied, results must be
+    // restricted to chunks that actually pass the filter — even if vector
+    // similarity against the full store would surface other items higher.
+    // Callers use these filters as intent ("only action items") and are
+    // surprised when unrelated-but-embedding-close content leaks through.
+    const hasHardFilter = Boolean(filters?.tag || filters?.domain || filters?.topic);
+    const allowedIds = hasHardFilter
+        ? new Set(allChunks.map(c => c.id))
+        : undefined;
     const scored = new Map();
     // Pre-extract query signals for boosting
     const querySignals = extractQuerySignals(query);
@@ -38,9 +47,21 @@ export async function search(config, storage, query, maxResults, filters) {
         const vectorResults = await storage.vectorSearch(queryEmbedding, Math.min(limit * 5, 50), // Larger candidate pool
         "tier != 'archive' AND consolidation_level != -1");
         for (const { chunk, distance } of vectorResults) {
+            if (allowedIds && !allowedIds.has(chunk.id))
+                continue;
             const similarity = 1 - distance;
             if (similarity > 0.25) {
                 scored.set(chunk.id, { chunk, score: similarity });
+            }
+        }
+        // If a hard filter is present and vector search missed tag-matching
+        // chunks (because they embedded far from the query), seed them in with
+        // a floor score so they still rank over irrelevant vector hits.
+        if (allowedIds) {
+            for (const chunk of allChunks) {
+                if (!scored.has(chunk.id)) {
+                    scored.set(chunk.id, { chunk, score: 0.1 });
+                }
             }
         }
     }
@@ -291,9 +312,9 @@ export async function search(config, storage, query, maxResults, filters) {
     if (config.enableCrossEncoderRerank) {
         const candidates = Array.from(scored.values())
             .sort((a, b) => b.score - a.score)
-            .slice(0, 30);
+            .slice(0, Math.max(30, limit));
         try {
-            const reranked = await rerank(query, candidates.map(c => c.chunk.content), Math.min(limit, 10));
+            const reranked = await rerank(query, candidates.map(c => c.chunk.content), limit);
             sorted = reranked.map(r => ({
                 chunk: candidates[r.index].chunk,
                 score: r.score,
@@ -303,17 +324,18 @@ export async function search(config, storage, query, maxResults, filters) {
             // Fall back to score-based ranking
             sorted = Array.from(scored.values())
                 .sort((a, b) => b.score - a.score)
-                .slice(0, 20);
+                .slice(0, limit);
         }
     }
     else {
         sorted = Array.from(scored.values())
             .sort((a, b) => b.score - a.score)
-            .slice(0, 20);
+            .slice(0, limit);
     }
     // ── Apply token budget ────────────────────────────────────────────
     const results = [];
     let tokensUsed = 0;
+    const toUpdate = [];
     for (const entry of sorted) {
         const tokens = estimateTokens(entry.chunk.content) + 10;
         if (tokensUsed + tokens > config.maxRecallTokens)
@@ -322,10 +344,23 @@ export async function search(config, storage, query, maxResults, filters) {
             break;
         results.push({ chunk: entry.chunk, score: entry.score });
         tokensUsed += tokens;
-        await storage.updateChunk(entry.chunk.id, {
-            recallCount: entry.chunk.recallCount + 1,
-            lastRecalledAt: new Date().toISOString(),
-        });
+        toUpdate.push({ id: entry.chunk.id, recallCount: entry.chunk.recallCount + 1 });
+    }
+    // Fire-and-forget recall stat updates: Lance serializes writes, so awaiting
+    // N updates inside the hot path turns a 100-result search into a 60s
+    // timeout. Run them in the background so the caller isn't blocked.
+    if (toUpdate.length > 0) {
+        const ts = new Date().toISOString();
+        (async () => {
+            for (const { id, recallCount } of toUpdate) {
+                try {
+                    await storage.updateChunk(id, { recallCount, lastRecalledAt: ts });
+                }
+                catch {
+                    // Recall stats are best-effort; swallow to avoid unhandled rejections
+                }
+            }
+        })();
     }
     return results;
 }

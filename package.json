@@ -1,11 +1,12 @@
 {
   "name": "@onenomad/engram-memory",
-  "version": "1.0.0-beta.10",
+  "version": "1.0.0-beta.14",
   "description": "Engram — memory MCP server for Claude Code. LLM-powered extraction, hybrid ANN search, tier lifecycle, spreading activation, procedural rules, WAL, Mem0, and session-state.",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
-    "engram-memory": "dist/server.js"
+    "engram-memory": "dist/server.js",
+    "engram-mcp": "dist/cli.js"
   },
   "scripts": {
     "clean": "rm -rf dist",

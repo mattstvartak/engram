@@ -90,7 +90,7 @@ server.registerTool(
     description: 'Search long-term memories. Returns relevant facts, preferences, decisions, and rules. Set format=true to get pre-formatted output for prompt injection.',
     inputSchema: z.object({
       query: z.string().describe('Natural language search query.'),
-      maxResults: z.number().min(1).max(50).optional().describe('Max results (default: 10).'),
+      maxResults: z.number().min(1).max(500).optional().describe('Max results (default: 10, max: 500).'),
       domain: z.string().optional().describe('Filter by domain/project.'),
       topic: z.string().optional().describe('Filter by topic.'),
       tag: z.string().optional().describe('Filter by exact tag match. Consumer-defined (e.g. "cortex_type:action_item").'),

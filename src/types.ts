@@ -157,7 +157,7 @@ export const DEFAULT_CONFIG: SmartMemoryConfig = {
   shortTermRetentionDays: 14,
   longTermRetentionDays: 90,
   maxRecallChunks: 10,
-  maxRecallTokens: 1500,
+  maxRecallTokens: 50000,
   extractionThreshold: 3,
   mem0ApiKey: '',
   mem0UserId: 'default',

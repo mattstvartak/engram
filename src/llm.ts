@@ -98,6 +98,12 @@ export async function embed(
   text: string,
   contextPrefix?: string
 ): Promise<number[]> {
+  // Hard kill-switch for callers that need to skip the ~1.5s model load
+  // (e.g. CLI hooks running on every UserPromptSubmit). Throwing here lets
+  // search.ts fall into its existing keyword-only fallback path.
+  if (process.env.ENGRAM_SKIP_EMBED === '1') {
+    throw new Error('ENGRAM_SKIP_EMBED=1');
+  }
   try {
     const extractor = await getExtractor();
     // Contextual prefix improves retrieval by 35-49% (Anthropic research)
