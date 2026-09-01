@@ -407,3 +407,13 @@ Pick the next `DEBT-NNN` number. Stick to this skeleton:
 Resist the urge to write "we should fix this later" as a closing
 line. Every entry that survives in the ledger is one we explicitly
 chose not to fix today; that's the whole point of the file.
+
+## DEBT-021: listChunks cache is a stopgap, persisted BM25 index is the real fix
+
+1.3.0 added an in-memory `listChunks` memo on the Storage shim (invalidated on
+any chunk mutation) so search stops paying a full-corpus LanceDB read per query
+for IDF keyword scoring. That removes the repeated scan but the first search
+after any write still loads every non-archive row, and IDF weights are still
+recomputed per query over the full corpus. The real fix remains R-012: a
+persisted BM25 index updated incrementally at ingest, which also makes the
+"hybrid BM25" naming honest.
