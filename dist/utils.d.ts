@@ -14,3 +14,5 @@ export declare function buildContextPrefix(chunk: {
     tags?: string[];
     createdAt?: string;
 }): string;
+export declare function normalizeTaxonomyValue(value?: string): string;
+export declare function normalizeDomain(value?: string): string;

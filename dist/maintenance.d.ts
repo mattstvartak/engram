@@ -22,19 +22,24 @@ type SyncStats = Awaited<ReturnType<typeof syncBridge>>;
 export interface MaintenanceState {
     lastRunAt: string | null;
     rulesBackfilledAt: string | null;
+    kgBackfilledAt: string | null;
 }
 export interface MaintenanceResult extends ConsolidationStats {
     bridge: SyncStats;
     rulesBackfilled: number;
+    kgTriplesExtracted: number;
+    diaryDigestWritten: boolean;
+    taxonomyRewritten: number;
 }
 export declare function readMaintenanceState(dataDir: string): MaintenanceState;
 export declare function autoMaintainEnabled(): boolean;
 export declare function maintainIntervalMs(): number;
 export declare function maintenanceOverdue(dataDir: string): boolean;
 /**
- * Full maintenance pass: consolidation, bridge sync, and (once) the rule
- * backfill. Shared by the memory-maintain tool and the auto scheduler so
- * both paths stay identical.
+ * Full maintenance pass: consolidation, bridge sync, LLM KG extraction,
+ * diary digest, and (once) the rule backfill. Shared by the
+ * memory-maintain tool and the auto scheduler so both paths stay
+ * identical.
  */
 export declare function runMaintenance(config: SmartMemoryConfig, storage: Storage): Promise<MaintenanceResult>;
 export {};

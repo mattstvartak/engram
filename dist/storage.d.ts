@@ -21,6 +21,9 @@ export declare class Storage {
     private adapter;
     private ready;
     private batch;
+    private listCache;
+    private static readonly LIST_CACHE_MAX_KEYS;
+    private invalidateListCache;
     constructor(dataDir: string);
     ensureReady(): Promise<void>;
     saveChunk(chunk: StoredChunk): Promise<void>;

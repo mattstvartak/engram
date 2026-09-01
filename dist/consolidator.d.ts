@@ -6,6 +6,7 @@ export interface ConsolidationStats {
     decayed: number;
     promoted: number;
     demoted: number;
+    shortTermArchived: number;
     reactivated: number;
     dailyMoved: number;
     merged: number;

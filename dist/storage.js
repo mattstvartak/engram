@@ -23,6 +23,16 @@ export class Storage {
     // writing immediately; flushBatch() commits them as one bulk upsert +
     // one bulk delete + a compaction. See beginBatch() for why.
     batch = null;
+    // listChunks memo. Search builds IDF weights from a full-corpus scan on
+    // every query; without this each search pays a complete LanceDB read
+    // (embeddings included). Keyed by the opts shape, dropped wholesale on
+    // any chunk mutation. A persisted BM25 index is the real fix (see
+    // ARCHITECTURE_DEBT).
+    listCache = new Map();
+    static LIST_CACHE_MAX_KEYS = 8;
+    invalidateListCache() {
+        this.listCache.clear();
+    }
     constructor(dataDir) {
         // Resolve eagerly; file mode is sync, postgres mode awaits the
         // factory before ensureReady() returns.
@@ -43,10 +53,17 @@ export class Storage {
         await this.ready;
     }
     // ── Chunks ────────────────────────────────────────────────────────
-    saveChunk(chunk) { return this.adapter.saveChunk(chunk); }
-    saveChunks(chunks) { return this.adapter.saveChunks(chunks); }
+    saveChunk(chunk) {
+        this.invalidateListCache();
+        return this.adapter.saveChunk(chunk);
+    }
+    saveChunks(chunks) {
+        this.invalidateListCache();
+        return this.adapter.saveChunks(chunks);
+    }
     getChunk(id) { return this.adapter.getChunk(id); }
     deleteChunk(id) {
+        this.invalidateListCache();
         if (this.batch) {
             this.batch.updates.delete(id);
             this.batch.deletes.add(id);
@@ -54,8 +71,19 @@ export class Storage {
         }
         return this.adapter.deleteChunk(id);
     }
-    listChunks(opts) { return this.adapter.listChunks(opts); }
+    async listChunks(opts) {
+        const key = JSON.stringify(opts ?? {});
+        const cached = this.listCache.get(key);
+        if (cached)
+            return [...cached];
+        const result = await this.adapter.listChunks(opts);
+        if (this.listCache.size >= Storage.LIST_CACHE_MAX_KEYS)
+            this.listCache.clear();
+        this.listCache.set(key, result);
+        return [...result];
+    }
     updateChunk(id, updates) {
+        this.invalidateListCache();
         if (this.batch) {
             // A delete already staged for this id wins — don't resurrect it.
             if (this.batch.deletes.has(id))
@@ -84,6 +112,7 @@ export class Storage {
     async updateChunks(chunks) {
         if (chunks.length === 0)
             return;
+        this.invalidateListCache();
         if (this.adapter.updateChunks)
             return this.adapter.updateChunks(chunks);
         for (const c of chunks)
@@ -91,6 +120,7 @@ export class Storage {
     }
     /** Compact + prune the chunk table. See StorageAdapter.optimizeChunks. */
     async optimizeChunks(olderThanMs, deleteUnverified) {
+        this.invalidateListCache();
         if (this.adapter.optimizeChunks)
             return this.adapter.optimizeChunks(olderThanMs, deleteUnverified);
     }
@@ -102,6 +132,7 @@ export class Storage {
      * adapters that don't implement the batch primitives (postgres/cloud).
      */
     async flushBatch() {
+        this.invalidateListCache();
         const batch = this.batch;
         this.batch = null; // writes below must go straight through
         if (!batch)

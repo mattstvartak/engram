@@ -1,4 +1,5 @@
 import { Storage } from './storage.js';
+import type { SmartMemoryConfig } from './types.js';
 /**
  * Heuristic entity-relationship extraction for auto-populating the knowledge graph.
  *
@@ -32,4 +33,12 @@ export declare function extractTriples(content: string, context?: ExtractionCont
  * Returns the number of triples added/reinforced.
  */
 export declare function extractAndPersistTriples(storage: Storage, content: string, context?: ExtractionContext): Promise<number>;
+export declare const KG_PREDICATES: readonly ["works_at", "works_on", "uses", "prefers", "decided", "located_in", "part_of", "owns", "created", "depends_on", "reports_to", "named", "costs", "scheduled_for", "related_to"];
+interface LlmChunkInput {
+    id: string;
+    content: string;
+    context: ExtractionContext;
+}
+export declare function extractTriplesLlmBatch(config: SmartMemoryConfig, inputs: LlmChunkInput[]): Promise<Map<string, ExtractionResult[]>>;
+export declare function llmExtractAndPersist(config: SmartMemoryConfig, storage: Storage, chunks: LlmChunkInput[]): Promise<number>;
 export {};

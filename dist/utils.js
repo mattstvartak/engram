@@ -76,4 +76,24 @@ export function buildContextPrefix(chunk) {
     }
     return parts.length > 0 ? parts.join('. ') + '. ' : '';
 }
+// ── Taxonomy normalization ──────────────────────────────────────────
+// Callers pass domain/topic strings verbatim, which historically stored
+// quoted values ('"dewe-ai-template"'), stray brackets, and case
+// variants as distinct taxonomies. Normalize at ingest; a maintenance
+// pass rewrites older rows to the same canonical form.
+export function normalizeTaxonomyValue(value) {
+    if (!value)
+        return '';
+    let v = value.trim();
+    for (;;) {
+        const next = v.replace(/^["'[\](]+/, '').replace(/["'[\])]+$/, '').trim();
+        if (next === v)
+            break;
+        v = next;
+    }
+    return v;
+}
+export function normalizeDomain(value) {
+    return normalizeTaxonomyValue(value).toLowerCase();
+}
 //# sourceMappingURL=utils.js.map

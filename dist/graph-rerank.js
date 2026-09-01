@@ -36,6 +36,18 @@ const MAX_CANDIDATES_TO_EXPAND = 20;
 const MAX_ENTITIES_PER_CANDIDATE = 5;
 const BOOST_PER_CONNECTION = 0.15;
 const MAX_BOOST = 0.5;
+async function fetchTriplesBySource(storage) {
+    const all = await storage.queryTriples({});
+    const bySource = new Map();
+    for (const t of all) {
+        if (!t.source)
+            continue;
+        const list = bySource.get(t.source) ?? [];
+        list.push(t);
+        bySource.set(t.source, list);
+    }
+    return bySource;
+}
 /**
  * Rerank candidates using a 1-hop KG expansion. Returns a new array
  * (does not mutate inputs); preserves all candidates, only reorders.
@@ -47,13 +59,16 @@ export async function graphAwareRerank(storage, candidates) {
     // top-K (10-50), this is the whole list. Cap protects against
     // pathological inputs.
     const expandable = candidates.slice(0, MAX_CANDIDATES_TO_EXPAND);
+    // Fetch the triple store once and group by contributing chunk;
+    // per-candidate queryTriples calls were a full scan each.
+    const triplesBySource = await fetchTriplesBySource(storage);
     // Step 1+2: gather entities mentioned by each candidate's contributed
     // triples. Map entity → set of candidate ids that contributed it.
     const entityToCandidateIds = new Map();
     const entitiesByCandidate = new Map();
     for (const cand of expandable) {
         const id = cand.chunk.id;
-        const triples = await storage.queryTriples({}).then((all) => all.filter((t) => t.source === id));
+        const triples = triplesBySource.get(id) ?? [];
         if (triples.length === 0)
             continue;
         const entities = new Set();
@@ -165,9 +180,10 @@ export async function graphAwareRerankPPR(storage, candidates) {
     // Step 1+2: candidate → entities they contributed (same as lite).
     const entitiesByCandidate = new Map();
     const seedEntities = new Set();
+    const triplesBySource = await fetchTriplesBySource(storage);
     for (const cand of expandable) {
         const id = cand.chunk.id;
-        const triples = await storage.queryTriples({}).then((all) => all.filter((t) => t.source === id));
+        const triples = triplesBySource.get(id) ?? [];
         if (triples.length === 0)
             continue;
         const entities = new Set();
