@@ -20,7 +20,7 @@ import {
   maintainIntervalMs,
 } from './maintenance.js';
 import { getVersion } from './version.js';
-import { search, selectRelevant, formatRecalledMemories } from './search.js';
+import { search, formatRecalledMemories } from './search.js';
 import { graphAwareRerank, graphAwareRerankPPR } from './graph-rerank.js';
 import { extractFromConversation } from './extractor.js';
 import { extractRules, formatRulesForPrompt } from './procedural.js';
@@ -90,22 +90,9 @@ const server = new McpServer(
   { name: 'przm-memory', version: getVersion() },
   {
     instructions: [
-      'przm Memory is your long-term memory.',
-      '',
-      'Save what matters: memory-ingest for facts/preferences/decisions, memory-kg-add for relationships, memory-diary-write at session end.',
-      'Before answering about prior conversations: memory-search first.',
-      '',
-      '## Handoff protocol (MANDATORY)',
-      'Context compaction can fail if the window fills completely. When that happens, the user has to abandon the chat. Never let this happen.',
-      '',
-      '1. Save memories continuously with memory-ingest — never batch.',
-      '2. At session start, call memory-handoff-read to resume where the prior session left off. If the user references a specific past session (by name or topic), call memory-handoff-list first and load the matching named checkpoint with memory-handoff-read({ name }).',
-      '3. When context feels heavy (long tool outputs, many file reads, extended work) call memory-context-pressure with your honest level assessment. Follow the returned actionPlan.',
-      '4. At NATURAL PHASE BOUNDARIES (task done, pivoting focus, finishing a subsystem, user says "ok next let\'s…") call memory-context-pressure with phaseBoundary=true and compact. Pivots thrash the cache anyway — compacting at the boundary is a free lunch, carrying verbose tool output from the old phase into the new one is not.',
-      '5. BEFORE invoking /compact — or before session end, or when the user asks to "save this session" / "checkpoint this" — call memory-handoff-write with a full "where we left off" snapshot: currentTask, completed, nextSteps, openQuestions, fileRefs (path:line), decisions, notes. Pass `name` for a user-friendly checkpoint label so the user can resume it explicitly later.',
-      '6. Do not wait for the system to auto-compact. Compact early, while there is still headroom for the handoff.',
-      '',
-      'If persona MCP available: call persona_signal on user reactions (correction, approval, frustration, praise, etc).',
+      'przm Memory is your long-term cross-session memory.',
+      'Search it (memory-search) before answering about prior work; ingest durable facts, preferences, and decisions (memory-ingest) as they surface, not batched at the end.',
+      'Read a handoff (memory-handoff-read) at session start; write one (memory-handoff-write) before /compact or session end.',
     ].join('\n'),
   }
 );
@@ -113,6 +100,31 @@ const server = new McpServer(
 // ─────────────────────────────────────────────────────────────────────
 // CORE MEMORY TOOLS
 // ─────────────────────────────────────────────────────────────────────
+
+// Greedy token-budget fill shared by memory-search (budgetTokens param)
+// and memory-budget. Ranks by relevance score × importance and includes
+// entries until the next one would exceed the budget. Token estimate is
+// conservative: 4 chars/token for prose + a 30-token wrapper per entry.
+function greedyBudgetFill<T extends { score: number; chunk: { content: string; importance: number } }>(
+  candidates: T[],
+  budgetTokens: number
+): { selected: T[]; usedTokens: number } {
+  const WRAPPER_OVERHEAD = 30;
+  const CHARS_PER_TOKEN = 4;
+  const ranked = [...candidates]
+    .map(r => ({ r, weight: r.score * (r.chunk.importance + 0.1) }))
+    .sort((a, b) => b.weight - a.weight);
+
+  const selected: T[] = [];
+  let usedTokens = 0;
+  for (const { r } of ranked) {
+    const entryTokens = Math.ceil(r.chunk.content.length / CHARS_PER_TOKEN) + WRAPPER_OVERHEAD;
+    if (usedTokens + entryTokens > budgetTokens) continue;
+    selected.push(r);
+    usedTokens += entryTokens;
+  }
+  return { selected, usedTokens };
+}
 
 server.registerTool(
   'memory-search',
@@ -127,28 +139,24 @@ server.registerTool(
       tag: z.string().optional().describe('Filter by exact tag match. Consumer-defined (e.g. "cortex_type:action_item").'),
       cognitiveLoad: z.enum(['low', 'normal', 'high']).optional().describe('From Persona. "high" returns top 3 only.'),
       format: z.boolean().optional().describe('If true, returns formatted text grouped by cognitive layer instead of JSON.'),
-      graphRerank: z.union([z.boolean(), z.enum(['lite', 'ppr'])]).optional().describe('Graph-aware rerank mode. `false` or omitted = pure similarity ranking. `true` or `"lite"` = 1-hop expansion + score boost (HippoRAG-lite, fast, no convergence). `"ppr"` = full Personalized PageRank walk from query-seed entities (Gutiérrez et al, NeurIPS 2024 — more accurate on multi-hop QA at modest extra cost). PPR falls back to lite when the graph has < 4 entities or > 500 nodes.'),
+      graphRerank: z.union([z.boolean(), z.enum(['lite', 'ppr'])]).optional().describe('Graph-aware rerank mode. Default is `"lite"`: 1-hop expansion + score boost (HippoRAG-lite, fast, self-no-ops without graph data). `false` = pure similarity ranking. `"ppr"` = full Personalized PageRank walk from query-seed entities (Gutiérrez et al, NeurIPS 2024 — more accurate on multi-hop QA at modest extra cost). PPR falls back to lite when the graph has < 4 entities or > 500 nodes.'),
+      budgetTokens: z.number().min(50).max(50000).optional().describe('Token budget for the returned set. Greedy fill by score × importance, stops before exceeding the budget. Alternative to maxResults for context-slot callers.'),
     }),
   },
-  async ({ query, maxResults, domain, topic, tag, cognitiveLoad, format: formatOutput, graphRerank }) => {
+  async ({ query, maxResults, domain, topic, tag, cognitiveLoad, format: formatOutput, graphRerank, budgetTokens }) => {
     let effectiveMaxResults = maxResults;
     if (cognitiveLoad === 'high') {
       effectiveMaxResults = Math.min(effectiveMaxResults ?? 10, 3);
     }
     const storage = await ensureStorage();
     const results = await search(config, storage, query, effectiveMaxResults, { domain, topic, tag });
-    let selected: typeof results;
-    try {
-      selected = await selectRelevant(config, query, results);
-    } catch {
-      selected = results.slice(0, cognitiveLoad === 'high' ? 3 : 5);
-    }
-    // Optional graph-aware rerank.
-    //   - lite (or `true`): 1-hop expansion + boost. Fast.
+    let selected = results;
+    // Graph-aware rerank, on by default in lite mode.
+    //   - lite: 1-hop expansion + boost. Fast, self-no-ops without graph data.
     //   - ppr: full Personalized PageRank walk from seed entities.
     //     Better on multi-hop QA but pays the iteration cost.
-    // Both no-op on memory stores without graph data.
-    if (graphRerank) {
+    //   - false: similarity-only ranking.
+    if (graphRerank !== false) {
       const mode = graphRerank === 'ppr' ? 'ppr' : 'lite';
       try {
         selected = mode === 'ppr'
@@ -158,6 +166,10 @@ server.registerTool(
         // graph rerank is opportunistic — fall through to similarity-
         // only results on any error.
       }
+    }
+    if (budgetTokens) {
+      const fill = greedyBudgetFill(selected, budgetTokens);
+      selected = fill.selected;
     }
     if (cognitiveLoad === 'high' && selected.length > 3) {
       selected = selected
@@ -220,34 +232,7 @@ server.registerTool(
     const storage = await ensureStorage();
     const candidates = await search(config, storage, query, candidateLimit ?? 50, { domain, topic, tag });
 
-    // Greedy budget fill. Sort by relevance score × importance (the
-    // composite "useful here AND useful in general" signal). Token
-    // estimate is conservative: 4 chars/token for English-prose
-    // memory content + a 30-token wrapper overhead per entry for
-    // type/source/tags rendering. Slightly over-estimating beats
-    // under-estimating; the budget caller (przm's CBE) prefers a
-    // small remainder over a hard overflow.
-    const ranked = candidates
-      .map((r) => ({ r, weight: r.score * (r.chunk.importance + 0.1) }))
-      .sort((a, b) => b.weight - a.weight);
-
-    const selected: typeof candidates = [];
-    let usedTokens = 0;
-    const WRAPPER_OVERHEAD = 30;
-    const CHARS_PER_TOKEN = 4;
-    for (const { r } of ranked) {
-      const contentTokens = Math.ceil(r.chunk.content.length / CHARS_PER_TOKEN);
-      const entryTokens = contentTokens + WRAPPER_OVERHEAD;
-      if (usedTokens + entryTokens > budgetTokens) {
-        // Hit the budget. The remaining candidates would push us over;
-        // greedy stop here. Could continue scanning for a smaller
-        // entry that still fits, but the marginal token win usually
-        // isn't worth losing the strict importance ordering.
-        continue;
-      }
-      selected.push(r);
-      usedTokens += entryTokens;
-    }
+    const { selected, usedTokens } = greedyBudgetFill(candidates, budgetTokens);
 
     if (formatOutput) {
       const memText = formatRecalledMemories(selected);
@@ -692,6 +677,17 @@ server.registerTool(
       bridge,
       diaryEntries: diaryDates.length,
       llmAvailable: isLlmAvailable(),
+      ...(isLlmAvailable() ? {} : {
+        llmDegradedFeatures: [
+          'rule extraction (heuristic patterns only)',
+          'conversation extraction (heuristic fallback)',
+          'episodic summaries (concatenation, not summarization)',
+          'contradiction detection (keyword heuristics)',
+          'reconsolidation (disabled)',
+          'LLM knowledge-graph extraction (regex patterns only)',
+        ],
+        llmHint: 'Set ENGRAM_LLM_BASE_URL (any OpenAI-compatible server, e.g. local Ollama) or OPENROUTER_API_KEY to enable.',
+      }),
       embeddingModel: getEmbeddingModelName(),
       // Which model the stored vectors were embedded with, and whether a
       // reembed run is needed to bring the corpus into the active model's
@@ -1414,13 +1410,14 @@ server.registerPrompt(
 // ENGRAM-* BACKWARD COMPATIBILITY ALIASES
 // ─────────────────────────────────────────────────────────────────────
 // Tool names were renamed from engram-* → memory-* in v1.0.0-beta.7.
-// These aliases keep existing installations working. The canonical names
-// are memory-*; the engram-* aliases will be removed in v2.
+// The canonical names are memory-*. As of 1.3.0 the engram-* aliases are
+// opt-in via PRZM_MEMORY_LEGACY_ALIASES=1: they double the tool surface
+// and every MCP client pays schema tokens for them on every session.
 //
 // Implementation: after all canonical registrations are done, copy each
 // registered-tool entry into the SDK's internal registry under the old
 // name. Shares the same handler and schema — no logic duplication.
-{
+if (process.env.PRZM_MEMORY_LEGACY_ALIASES === '1') {
   const rt = (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
   const aliases: [string, string][] = [
     ['memory-search',           'engram-search'],

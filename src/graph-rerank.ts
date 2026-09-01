@@ -41,6 +41,20 @@ const MAX_ENTITIES_PER_CANDIDATE = 5;
 const BOOST_PER_CONNECTION = 0.15;
 const MAX_BOOST = 0.5;
 
+type Triple = Awaited<ReturnType<Storage['queryTriples']>>[number];
+
+async function fetchTriplesBySource(storage: Storage): Promise<Map<string, Triple[]>> {
+  const all = await storage.queryTriples({});
+  const bySource = new Map<string, Triple[]>();
+  for (const t of all) {
+    if (!t.source) continue;
+    const list = bySource.get(t.source) ?? [];
+    list.push(t);
+    bySource.set(t.source, list);
+  }
+  return bySource;
+}
+
 /**
  * Rerank candidates using a 1-hop KG expansion. Returns a new array
  * (does not mutate inputs); preserves all candidates, only reorders.
@@ -56,6 +70,10 @@ export async function graphAwareRerank(
   // pathological inputs.
   const expandable = candidates.slice(0, MAX_CANDIDATES_TO_EXPAND);
 
+  // Fetch the triple store once and group by contributing chunk;
+  // per-candidate queryTriples calls were a full scan each.
+  const triplesBySource = await fetchTriplesBySource(storage);
+
   // Step 1+2: gather entities mentioned by each candidate's contributed
   // triples. Map entity → set of candidate ids that contributed it.
   const entityToCandidateIds = new Map<string, Set<string>>();
@@ -63,9 +81,7 @@ export async function graphAwareRerank(
 
   for (const cand of expandable) {
     const id = cand.chunk.id;
-    const triples = await storage.queryTriples({}).then((all) =>
-      all.filter((t) => t.source === id),
-    );
+    const triples = triplesBySource.get(id) ?? [];
     if (triples.length === 0) continue;
 
     const entities = new Set<string>();
@@ -183,11 +199,11 @@ export async function graphAwareRerankPPR(
   const entitiesByCandidate = new Map<string, Set<string>>();
   const seedEntities = new Set<string>();
 
+  const triplesBySource = await fetchTriplesBySource(storage);
+
   for (const cand of expandable) {
     const id = cand.chunk.id;
-    const triples = await storage.queryTriples({}).then((all) =>
-      all.filter((t) => t.source === id),
-    );
+    const triples = triplesBySource.get(id) ?? [];
     if (triples.length === 0) continue;
     const entities = new Set<string>();
     for (const t of triples) {
