@@ -5,6 +5,81 @@ All notable changes to `@onenomad/przm-memory` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-01
+
+### Added
+
+- **Short-term -> archive lifecycle.** Short-term was a terminal tier:
+  demotion only ran on long-term, so never-recalled default-importance
+  chunks accumulated forever (a live store had 1491 of them). Stale
+  short-term chunks (older than `shortTermRetentionDays`, zero recalls,
+  importance below the promotion threshold, origin not `user`) now
+  archive during consolidation. The `dailyRetentionDays`,
+  `shortTermRetentionDays`, and `longTermRetentionDays` config knobs are
+  now actually read instead of hardcoded constants, and a
+  tier-lifecycle test pins the full daily -> short-term -> long-term ->
+  archive path.
+- **LLM knowledge-graph extraction.** When an LLM is configured,
+  maintenance extracts triples with a closed 15-predicate vocabulary in
+  bounded batches: a one-shot backfill over existing long-term chunks
+  plus an incremental pass over chunks created since the last run. The
+  regex extractor stays as the per-ingest fallback. The backfill stamp
+  is only written when the LLM was actually available, so configuring a
+  model later still triggers it.
+- **`budgetTokens` on memory-search.** Greedy token-budget fill (score
+  x importance) applied to search results, sharing the memory-budget
+  implementation.
+- **Diary auto-digest.** Daily maintenance writes a short digest of the
+  day's ingest activity to the diary when no entry exists for the day,
+  so the diary stays alive without any agent calling memory-diary-write.
+- **Degraded-features surfacing.** memory-stats now lists which
+  subsystems are running in heuristic mode when no LLM is configured,
+  with a hint for enabling one.
+
+### Changed
+
+- **`engram-*` aliases are now opt-in.** Set
+  `PRZM_MEMORY_LEGACY_ALIASES=1` to register the 20 legacy aliases.
+  Off by default: they doubled the tool surface every MCP client paid
+  schema tokens for on every session.
+- **Graph rerank (lite) is now the default on memory-search.** It
+  self-no-ops on stores without graph data; pass `graphRerank: false`
+  for pure similarity ranking. Both rerank modes now fetch the triple
+  store once per call instead of once per candidate.
+- **Removed the LLM listwise reranker from the memory-search handler.**
+  It ran on every search the moment an API key was configured, adding
+  0.5-2s latency for a ranking pass the benchmarks showed hurts
+  (DEBT-009). The benchmarked search path never included it, so
+  published numbers now describe production behavior. `selectRelevant`
+  stays exported for the benchmark harnesses.
+- **Taxonomy normalization.** Ingest now strips wrapping quotes,
+  brackets, and whitespace from domain/topic and lowercases domains; a
+  conservative maintenance pass rewrites existing rows to the same
+  canonical form (case/quote/whitespace variants only, no fuzzy
+  merging).
+- **listChunks memo.** Search no longer pays a full-corpus LanceDB read
+  per query for IDF scoring; the Storage shim caches list results and
+  drops the cache on any chunk mutation (see DEBT-021 for the real
+  BM25 fix).
+- **Trimmed server instructions.** The shouty six-step MANDATORY block
+  is now three declarative lines; behavioral triggers live in the tool
+  descriptions (R-008).
+
+### Fixed
+
+- **Bundled hooks wrote to the wrong data dir.** The stop/precompact
+  hooks defaulted to `~/.claude/engram` and ignored
+  `PRZM_MEMORY_DATA_DIR`; checkpoint handoffs landed where the server
+  never read them. The env fallback chain is now
+  `PRZM_MEMORY_DATA_DIR` > `ENGRAM_DATA_DIR` > `SMART_MEMORY_DATA_DIR`
+  > `~/.claude/przm-memory`.
+- **Stale slash commands.** The shipped `.claude/commands/*.md` and
+  `hooks/README.md` referenced dead `engram-*` tool names, including
+  `engram-check-duplicate` which no longer exists (dedupe is inline in
+  memory-ingest).
+- **Doc corrections.** README tool count (29, not 20), BENCHMARKS.md
+  title and clone URL (przm-memory, not engram-mcp).
+
 ## [1.2.0] - 2026-07-07
 
 ### Added

@@ -1,6 +1,6 @@
-# Engram Benchmarks — Methodology Reference
+# przm Memory Benchmarks — Methodology Reference
 
-This is the deep technical reference for Engram's benchmark suite. The short version with results lives in the [README](README.md#benchmarks). This document covers what each benchmark measures, how it computes its numbers, and how to reproduce them.
+This is the deep technical reference for przm Memory's benchmark suite. The short version with results lives in the [README](README.md#benchmarks). This document covers what each benchmark measures, how it computes its numbers, and how to reproduce them.
 
 ## Contents
 
@@ -17,8 +17,8 @@ This is the deep technical reference for Engram's benchmark suite. The short ver
 ## One-command run
 
 ```bash
-git clone https://github.com/OneNomad-LLC/engram-mcp.git
-cd engram-mcp
+git clone https://github.com/OneNomad-LLC/przm-memory.git
+cd przm-memory
 npm install
 bash benchmarks/download-datasets.sh
 npm run bench:all

@@ -264,7 +264,7 @@ przm Memory ships two optional Claude Code hooks: `hooks/engram_precompact_hook.
 
 Use the absolute path to the hook script — Claude Code does not resolve relative paths from your project root. On Windows, the hooks require WSL or Git Bash on PATH (they're bash scripts); native PowerShell is not supported.
 
-The hooks are optional. The MCP tools work without them. The hooks just make the handoff lifeline reliable across `/compact` and session end without requiring you to remember to call `engram-handoff-write` manually.
+The hooks are optional. The MCP tools work without them. The hooks just make the handoff lifeline reliable across `/compact` and session end without requiring you to remember to call `memory-handoff-write` manually.
 
 ## Compatibility
 
@@ -464,9 +464,9 @@ For shared/cloud deployments where many users share one process, it also speaks 
 
 ## Tools
 
-The MCP server exposes 20 tools across six groups. Several earlier tools (`engram-format`, `engram-check-duplicate`, `engram-extract-rules`, `engram-taxonomy`, `engram-kg-stats`) were folded into their parent tools in 1.0.0-beta.6 — pass the relevant flag or mode to the parent instead. 1.0.0-beta.8 added the Handoff tools for cross-session continuity. 1.0.0 adds the memory origin field (user vs derived), the scratch tier, and `memory-scratch-promote`.
+The MCP server exposes 29 tools across six groups. Several earlier tools (`engram-format`, `engram-check-duplicate`, `engram-extract-rules`, `engram-taxonomy`, `engram-kg-stats`) were folded into their parent tools in 1.0.0-beta.6 — pass the relevant flag or mode to the parent instead. 1.0.0-beta.8 added the Handoff tools for cross-session continuity. 1.0.0 adds the memory origin field (user vs derived), the scratch tier, and `memory-scratch-promote`.
 
-> **Backward compatibility:** tools were renamed from `engram-*` to `memory-*` in v1.0.0-beta.7. The server still registers `engram-*` aliases so existing installations keep working, but new configs should use `memory-*`. The aliases will be removed in v2.
+> **Backward compatibility:** tools were renamed from `engram-*` to `memory-*` in v1.0.0-beta.7. As of 1.3.0 the `engram-*` aliases are opt-in: set `PRZM_MEMORY_LEGACY_ALIASES=1` to register them. They double the tool surface every MCP client pays for, so leave them off unless an old config still calls `engram-*` names. They will be removed in v2.
 
 ### Core Memory
 
