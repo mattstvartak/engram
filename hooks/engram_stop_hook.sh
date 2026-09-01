@@ -13,7 +13,7 @@
 # "context-pressure" so it won't confuse the PreCompact freshness check
 # (which only matches reason="compact").
 
-DATA_DIR="${ENGRAM_DATA_DIR:-${SMART_MEMORY_DATA_DIR:-$HOME/.claude/engram}}"
+DATA_DIR="${PRZM_MEMORY_DATA_DIR:-${ENGRAM_DATA_DIR:-${SMART_MEMORY_DATA_DIR:-$HOME/.claude/przm-memory}}}"
 
 # Capture the Claude Code payload: { session_id, transcript_path, stop_hook_active }.
 PAYLOAD=$(cat 2>/dev/null || true)

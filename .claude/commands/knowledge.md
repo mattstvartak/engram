@@ -2,10 +2,10 @@ Knowledge graph operation: $ARGUMENTS
 
 Parse the subcommand from the arguments:
 
-- `timeline <entity>` - Call `engram-kg-timeline` for the entity. Present results chronologically with valid-from/valid-to dates. Show both current and historical facts.
-- `about <entity>` - Call `engram-kg-query` filtered to the entity as subject. Show all currently valid triples in a readable format. Group by predicate type if there are many.
-- `add <subject> <predicate> <object>` - Call `engram-kg-add` with the triple. If the fact contradicts an existing one, ask if the old fact should be invalidated.
-- `correct <subject> <predicate>` - Search for existing triples matching the subject and predicate. Show them. Ask the user for the correct value. Invalidate the old triple with `engram-kg-invalidate` and add the new one with `engram-kg-add`.
-- `stats` - Call `engram-kg-stats`. Show entity count, triple count, active vs invalidated, and most connected entities.
+- `timeline <entity>` - Call `memory-kg-timeline` for the entity. Present results chronologically with valid-from/valid-to dates. Show both current and historical facts.
+- `about <entity>` - Call `memory-kg-query` filtered to the entity as subject. Show all currently valid triples in a readable format. Group by predicate type if there are many.
+- `add <subject> <predicate> <object>` - Call `memory-kg-add` with the triple. If the fact contradicts an existing one, ask if the old fact should be invalidated.
+- `correct <subject> <predicate>` - Search for existing triples matching the subject and predicate. Show them. Ask the user for the correct value. Invalidate the old triple with `memory-kg-invalidate` and add the new one with `memory-kg-add`.
+- `stats` - Call `memory-stats`. Show entity count, triple count, active vs invalidated, and most connected entities.
 
 If no subcommand is given, show this list of available subcommands.

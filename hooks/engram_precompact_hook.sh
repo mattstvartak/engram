@@ -16,7 +16,7 @@
 # (that's where the LLM-distilled facts come from). The hook's job is
 # strictly the compact-time lifeline, not session-long memory hygiene.
 
-DATA_DIR="${ENGRAM_DATA_DIR:-${SMART_MEMORY_DATA_DIR:-$HOME/.claude/engram}}"
+DATA_DIR="${PRZM_MEMORY_DATA_DIR:-${ENGRAM_DATA_DIR:-${SMART_MEMORY_DATA_DIR:-$HOME/.claude/przm-memory}}}"
 WINDOW_SEC="${ENGRAM_PRECOMPACT_WINDOW_SEC:-300}"
 
 # Claude Code passes { session_id, transcript_path, trigger, ... } on stdin.

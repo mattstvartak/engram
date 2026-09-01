@@ -16,14 +16,14 @@ If the window fills so fast that `/compact` can't rescue it, the checkpoint is t
 ### `engram_precompact_hook.sh` (PreCompact event)
 Fires before context compression — on both manual `/compact` and Claude Code's auto-compact. **Always approves.** The hook's job is to make sure a real handoff exists when compaction fires:
 
-1. If Claude already called `engram-handoff-write` with `reason="compact"` within the last `ENGRAM_PRECOMPACT_WINDOW_SEC` seconds (default 300), reuse it.
+1. If Claude already called `memory-handoff-write` with `reason="compact"` within the last `ENGRAM_PRECOMPACT_WINDOW_SEC` seconds (default 300), reuse it.
 2. Otherwise, auto-generate one from the transcript — same mechanical extraction the Stop hook uses (current task, edited files, commits, last assistant note) — write it to the handoff dir, and approve.
 
 No more block-then-approve loop: `/compact` "just works" in a single step, and when Claude Code auto-compacts, the lifeline still lands.
 
 ### Why this design
-- **Never block the assistant.** The old every-10-messages Stop block and the 2-phase PreCompact block-then-approve both interrupted flow. Claude's MCP instructions (SKILL.md) still push proactive `engram-ingest` / `engram-kg-add` / `engram-handoff-write` during the session — those produce the LLM-distilled memories. The hooks cover the mechanical fallback.
-- **Always produce a handoff.** Either Claude wrote one (good) or the hook wrote one (also good). Either way, `engram-handoff-read` returns something meaningful in the next session.
+- **Never block the assistant.** The old every-10-messages Stop block and the 2-phase PreCompact block-then-approve both interrupted flow. Claude's MCP instructions (SKILL.md) still push proactive `memory-ingest` / `memory-kg-add` / `memory-handoff-write` during the session — those produce the LLM-distilled memories. The hooks cover the mechanical fallback.
+- **Always produce a handoff.** Either Claude wrote one (good) or the hook wrote one (also good). Either way, `memory-handoff-read` returns something meaningful in the next session.
 - **Fail open.** If the extractor crashes, the hooks still approve. Stranding the user on a filesystem error would defeat the whole point.
 
 ## Installation
