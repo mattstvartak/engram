@@ -3,7 +3,7 @@ import type { SmartMemoryConfig, MemoryType, CognitiveLayer, Sentiment, MemoryOr
 import type { StoredChunk } from './storage.js';
 import { Storage } from './storage.js';
 import { embed, getEmbeddingModelProfile } from './llm.js';
-import { buildContextPrefix } from './utils.js';
+import { buildContextPrefix, normalizeDomain, normalizeTaxonomyValue } from './utils.js';
 import { chunkContent } from './chunker.js';
 import { extractAndPersistTriples } from './kg-extractor.js';
 import { sourceDedup } from './source-dedup.js';
@@ -152,6 +152,8 @@ export async function ingest(
     if (!entry.content || entry.content.trim().length < 5) continue;
 
     const trimmedContent = entry.content.trim();
+    const normDomain = normalizeDomain(entry.domain);
+    const normTopic = normalizeTaxonomyValue(entry.topic);
 
     // Advisory poisoning check — log warning but never block
     const poisonFlag = checkContentPoisoning(trimmedContent);
@@ -180,8 +182,8 @@ export async function ingest(
         type: entry.type ?? 'context',
         cognitiveLayer: entry.layer ?? 'episodic',
         tags: entry.tags ?? [],
-        domain: entry.domain ?? '',
-        topic: entry.topic ?? '',
+        domain: normDomain,
+        topic: normTopic,
         source: entry.source ?? '',
         importance: entry.importance ?? 0.5,
         sentiment: entry.sentiment ?? 'neutral',
@@ -215,8 +217,8 @@ export async function ingest(
       type: baseType,
       cognitiveLayer: baseLayer,
       tags: entry.tags ?? [],
-      domain: entry.domain ?? '',
-      topic: entry.topic ?? '',
+      domain: normDomain,
+      topic: normTopic,
       source: entry.source ?? `wal:${Date.now()}`,
       importance: effectiveImportance,
       sentiment: entry.sentiment ?? 'neutral' as Sentiment,

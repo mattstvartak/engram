@@ -1,5 +1,7 @@
 import { Storage } from './storage.js';
 import { addTriple } from './knowledge-graph.js';
+import type { SmartMemoryConfig } from './types.js';
+import { isLlmAvailable, llmComplete } from './llm.js';
 
 /**
  * Heuristic entity-relationship extraction for auto-populating the knowledge graph.
@@ -309,4 +311,113 @@ export async function extractAndPersistTriples(
   }
 
   return count;
+}
+
+// ── LLM Extraction ───────────────────────────────────────────────────
+// The regex patterns above catch simple English shapes only; most real
+// memories are multi-clause and technical and match nothing. When an LLM
+// is configured, maintenance runs this batched path over chunks and the
+// regex path stays as the ingest-time fallback.
+
+export const KG_PREDICATES = [
+  'works_at', 'works_on', 'uses', 'prefers', 'decided', 'located_in',
+  'part_of', 'owns', 'created', 'depends_on', 'reports_to', 'named',
+  'costs', 'scheduled_for', 'related_to',
+] as const;
+
+const LLM_BATCH_SIZE = 8;
+const LLM_CONTENT_CAP = 600;
+
+interface LlmChunkInput {
+  id: string;
+  content: string;
+  context: ExtractionContext;
+}
+
+export async function extractTriplesLlmBatch(
+  config: SmartMemoryConfig,
+  inputs: LlmChunkInput[]
+): Promise<Map<string, ExtractionResult[]>> {
+  const out = new Map<string, ExtractionResult[]>();
+  if (!isLlmAvailable() || inputs.length === 0) return out;
+
+  const passages = inputs
+    .map((c, i) => `[${i}] ${c.content.slice(0, LLM_CONTENT_CAP)}`)
+    .join('\n\n');
+
+  const system = [
+    'Extract knowledge-graph triples from memory passages.',
+    `Allowed predicates (use ONLY these): ${KG_PREDICATES.join(', ')}.`,
+    'Subjects and objects are short noun phrases (entities, tools, projects, people, amounts). Use "user" for the speaker.',
+    'Return ONLY a JSON array: [{"i": <passage index>, "s": "subject", "p": "predicate", "o": "object"}, ...].',
+    'Extract only facts the passage states directly. Skip passages with no clear triple. Precision over recall.',
+  ].join('\n');
+
+  let response: string;
+  try {
+    response = await llmComplete(config, system, passages, { maxTokens: 1500, temperature: 0 });
+  } catch {
+    return out;
+  }
+
+  const match = response.match(/\[[\s\S]*\]/);
+  if (!match) return out;
+
+  let parsed: unknown;
+  try { parsed = JSON.parse(match[0]); } catch { return out; }
+  if (!Array.isArray(parsed)) return out;
+
+  const allowed = new Set<string>(KG_PREDICATES);
+  for (const row of parsed) {
+    if (typeof row !== 'object' || row === null) continue;
+    const { i, s, p, o } = row as { i?: unknown; s?: unknown; p?: unknown; o?: unknown };
+    if (typeof i !== 'number' || i < 0 || i >= inputs.length) continue;
+    if (typeof s !== 'string' || typeof p !== 'string' || typeof o !== 'string') continue;
+
+    const predicate = p.toLowerCase().replace(/[\s-]+/g, '_');
+    if (!allowed.has(predicate)) continue;
+
+    const subject = s.trim();
+    const object = o.trim();
+    if (subject.length < 2 || subject.length > 80) continue;
+    if (object.length < 2 || object.length > 120) continue;
+    if (object.split(/\s+/).length > 8) continue;
+
+    const id = inputs[i].id;
+    const list = out.get(id) ?? [];
+    const key = `${subject.toLowerCase()}|${predicate}|${object.toLowerCase()}`;
+    if (list.some(r => `${r.subject.toLowerCase()}|${r.predicate}|${r.object.toLowerCase()}` === key)) continue;
+    list.push({ subject, predicate, object, confidence: 0.6 });
+    out.set(id, list);
+  }
+  return out;
+}
+
+export async function llmExtractAndPersist(
+  config: SmartMemoryConfig,
+  storage: Storage,
+  chunks: LlmChunkInput[]
+): Promise<number> {
+  let added = 0;
+  for (let i = 0; i < chunks.length; i += LLM_BATCH_SIZE) {
+    const batch = chunks.slice(i, i + LLM_BATCH_SIZE);
+    const extracted = await extractTriplesLlmBatch(config, batch);
+    for (const [id, results] of extracted) {
+      const source = batch.find(c => c.id === id)?.context.source ?? 'maintenance';
+      for (const result of results) {
+        try {
+          await addTriple(
+            storage,
+            result.subject,
+            result.predicate,
+            result.object,
+            `auto-extract-llm:${source}`,
+            result.confidence
+          );
+          added++;
+        } catch { /* skip failed triples */ }
+      }
+    }
+  }
+  return added;
 }
