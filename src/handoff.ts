@@ -68,7 +68,13 @@ export function writeHandoff(dataDir: string, note: Omit<HandoffNote, 'timestamp
 
   const timestamp = new Date().toISOString();
   const full: HandoffNote = { ...note, timestamp };
-  const stamp = stampFilename();
+  // Stamps are second-resolution; two handoffs written within the same
+  // second (a hook checkpoint racing an agent handoff) would silently
+  // overwrite each other. Suffix until the name is free.
+  let stamp = stampFilename();
+  for (let n = 2; existsSync(handoffJsonPath(dataDir, stamp)); n++) {
+    stamp = `${stampFilename()}-${n}`;
+  }
 
   // Atomic write for the JSON+MD pair. Two non-atomic writeFileSync
   // calls in a row could leave a JSON file with no markdown sibling
