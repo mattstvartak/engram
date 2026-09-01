@@ -10,6 +10,7 @@ export interface ConsolidationStats {
   decayed: number;
   promoted: number;
   demoted: number;
+  shortTermArchived: number;
   reactivated: number;
   dailyMoved: number;
   merged: number;
@@ -29,6 +30,7 @@ export async function consolidate(storage: Storage, config?: SmartMemoryConfig):
   const cfg = config ?? DEFAULT_CONFIG;
   const stats: ConsolidationStats = {
     linked: 0, decayed: 0, promoted: 0, demoted: 0,
+    shortTermArchived: 0,
     reactivated: 0, dailyMoved: 0, merged: 0,
     episodicClustered: 0, episodicSummarized: 0,
     selfOrganized: 0, scratchPurged: 0,
@@ -55,9 +57,10 @@ export async function consolidate(storage: Storage, config?: SmartMemoryConfig):
       chunks = sortByReplayPriority(chunks);
     }
 
-    stats.dailyMoved = await processDailyTier(storage, chunks);
+    stats.dailyMoved = await processDailyTier(storage, chunks, cfg);
     stats.promoted = await promoteChunks(storage, chunks);
-    stats.demoted = await demoteToArchive(storage, chunks);
+    stats.shortTermArchived = await archiveStaleShortTerm(storage, chunks, cfg);
+    stats.demoted = await demoteToArchive(storage, chunks, cfg);
     stats.reactivated = await reactivateArchived(storage, chunks);
     stats.linked = await linkRelated(storage, chunks);
     stats.decayed = cfg.enableFSRS
@@ -103,10 +106,10 @@ async function purgeExpiredScratch(storage: Storage, chunks: StoredChunk[]): Pro
 
 // ── Daily → Short-term ───────────────────────────────────────────────
 
-async function processDailyTier(storage: Storage, chunks: StoredChunk[]): Promise<number> {
+async function processDailyTier(storage: Storage, chunks: StoredChunk[], cfg: SmartMemoryConfig): Promise<number> {
   let moved = 0;
   const now = Date.now();
-  const retentionMs = 2 * 86_400_000;
+  const retentionMs = cfg.dailyRetentionDays * 86_400_000;
 
   for (const chunk of chunks) {
     if (chunk.tier !== 'daily') continue;
@@ -147,9 +150,35 @@ async function promoteChunks(storage: Storage, chunks: StoredChunk[]): Promise<n
   return promoted;
 }
 
+// ── Short-term → Archive ─────────────────────────────────────────────
+// Short-term used to be a terminal tier: chunks that never met the
+// promotion criteria stayed forever. Anything old enough, never recalled,
+// and not important enough to promote gets archived instead.
+
+async function archiveStaleShortTerm(storage: Storage, chunks: StoredChunk[], cfg: SmartMemoryConfig): Promise<number> {
+  let archived = 0;
+  const now = Date.now();
+  const retentionMs = cfg.shortTermRetentionDays * 86_400_000;
+
+  for (const chunk of chunks) {
+    if (chunk.tier !== 'short-term') continue;
+    if (chunk.origin === 'user') continue;
+    if (chunk.recallCount > 0) continue;
+
+    const promotionThreshold = chunk.cognitiveLayer === 'procedural' ? 0.5 : 0.8;
+    if (chunk.importance >= promotionThreshold) continue;
+
+    if (now - new Date(chunk.createdAt).getTime() >= retentionMs) {
+      await storage.updateChunk(chunk.id, { tier: 'archive' });
+      archived++;
+    }
+  }
+  return archived;
+}
+
 // ── Long-term → Archive ──────────────────────────────────────────────
 
-async function demoteToArchive(storage: Storage, chunks: StoredChunk[]): Promise<number> {
+async function demoteToArchive(storage: Storage, chunks: StoredChunk[], cfg: SmartMemoryConfig): Promise<number> {
   let demoted = 0;
   const now = Date.now();
 
@@ -164,7 +193,7 @@ async function demoteToArchive(storage: Storage, chunks: StoredChunk[]): Promise
       ? now - new Date(chunk.lastRecalledAt).getTime()
       : Infinity;
 
-    const tooOld = ageMs >= 90 * 86_400_000;
+    const tooOld = ageMs >= cfg.longTermRetentionDays * 86_400_000;
     const inactive = lastRecallMs >= 30 * 86_400_000;
 
     if (tooOld || (inactive && chunk.importance < 0.3)) {
