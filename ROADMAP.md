@@ -14,134 +14,15 @@ items closed out here graduate to that ledger as resolved entries.
 
 ## P0 — ship this week
 
+All P0 items are resolved — see the ledger in ARCHITECTURE_DEBT.md.
+
 These are bugs, not features. Two of them block any credible cloud
 launch; the third is undermining the product's user-facing surface today.
 
-### R-001 — Fix the engram → przm naming drift across docs, skills, hooks, and runtime strings
 
-**Where:** `README.md:458-525` (Tools table), all seven
-`skills/*/SKILL.md` files, `hooks/engram_stop_hook.sh`,
-`hooks/engram_precompact_hook.sh`, `src/context-pressure.ts:28-58`
-(action-plan strings returned to the LLM), `SKILL.md:1-6`,
-`install-commands.sh`.
 
-**Why:** `src/server.ts:111+` registers tools as `memory-*` but every
-piece of documentation an LLM reads at session start still says
-`engram-*`. A fresh agent following the README or any skill file calls
-tools that don't exist. The action-plan strings returned by
-`memory-context-pressure` themselves contain `engram-ingest` and
-`engram-handoff-write`, which the receiving LLM dutifully tries to
-call. This is the highest user-visible defect in the project.
 
-**Approach:** Either rename every doc/skill/hook/string to `memory-*`,
-or register both names as aliases in `src/server.ts` (lower-risk
-rollback path). Aliasing is the recommended approach because it
-unblocks existing installations that have hardcoded the old names.
 
-**Effort:** S.
-
-**Revisit if:** never — this is launch-blocking.
-
----
-
-### R-002 — Fix KG confidence loss in Postgres
-
-**Where:** `src/storage-postgres.ts:660` (`pgRowToTriple` hardcodes
-`confidence: 0.5`); `migrations/postgres/001_init.sql:48-52`
-(`knowledge_triples` table has no `confidence` column);
-`src/knowledge-graph.ts:28-44` (`addTriple` writes confidence into
-nothing).
-
-**Why:** Every cloud / Postgres user runs a KG with uniformly-weighted
-edges, regardless of how many times a triple has been reinforced. The
-"confidence grows with evidence" design claim is a no-op on
-Postgres. Spreading activation, graph rerank, and KG-temporal lookup
-all weight by confidence — all three are broken for Postgres users.
-
-**Approach:** Add a `003_kg_confidence.sql` migration with
-`ALTER TABLE knowledge_triples ADD COLUMN confidence REAL NOT NULL
-DEFAULT 0.5`. Update `saveTriple` to write it. Update `pgRowToTriple`
-to read it.
-
-**Effort:** XS.
-
-**Revisit if:** never — blocks the prosumer / hosted launch (R-016).
-
----
-
-### R-003 — Stop episodic L1 summaries duplicating on every consolidation
-
-**Where:** `src/episodic-consolidator.ts:103` — sets
-`consolidationLevel: 0` on source chunks after summarizing them.
-
-**Why:** The filter at `consolidateEpisodic` selects candidates with
-`consolidationLevel === 0`. After running once, source chunks remain
-at level 0, so the next `memory-maintain` run produces another L1
-summary for the same cluster. Repeated runs accumulate duplicate
-summaries that the near-duplicate merge pass only sometimes catches.
-
-**Approach:** One-line change: set `consolidationLevel: 1` instead of
-`0` after summarizing.
-
-**Effort:** XS.
-
-**Revisit if:** never.
-
----
-
-### R-004 — Add UNIQUE constraint on active KG triples in Postgres
-
-**Where:** new `migrations/postgres/003_*.sql`.
-
-**Why:** `addTriple` does a check-then-insert (`queryTriples` followed
-by conditional `INSERT`). Two concurrent ingests of the same content
-both pass the check and produce duplicate active triples. LanceDB is
-single-writer so the race doesn't exist there; Postgres needs the
-constraint.
-
-**Approach:**
-```sql
-CREATE UNIQUE INDEX knowledge_triples_active_spo_idx
-  ON knowledge_triples (tenant_id, subject, predicate, object)
-  WHERE invalidated_at IS NULL;
-```
-Change the INSERT to `ON CONFLICT DO NOTHING` then a separate UPDATE
-for confidence reinforcement.
-
-**Effort:** S.
-
-**Revisit if:** never — race is real under concurrent agents on
-Postgres.
-
----
-
-### R-005 — Default Postgres SSL
-
-**Where:** `src/storage-postgres.ts:85-88`.
-
-**Why:** `new Pool({ connectionString, max })` doesn't set `ssl`. Cloud
-Postgres (Supabase, Neon, Heroku, RDS) typically requires
-`sslmode=require`. Users who don't know to append it get connection
-errors; users whose `DATABASE_URL` includes the flag but whose driver
-doesn't pick it up correctly get plaintext connections.
-
-**Approach:**
-```ts
-new Pool({
-  connectionString,
-  max,
-  ssl: connectionString.includes('localhost')
-    ? false
-    : { rejectUnauthorized: true },
-})
-```
-Document an `ENGRAM_PG_SSL=off` opt-out for local dev.
-
-**Effort:** XS.
-
-**Revisit if:** never.
-
----
 
 ## P1 — ship this quarter
 
@@ -175,75 +56,8 @@ so the consolidation loops can pipeline.
 
 ---
 
-### R-007 — Drop CSV-string params, use arrays
 
-**Where:** `src/server.ts:280` (`memory-ingest.tags`),
-`src/server.ts:572` (`memory-outcome.chunkIds`),
-`src/server.ts:1005-1009` (`memory-handoff-write.completed /
-nextSteps / openQuestions / fileRefs / decisions`).
 
-**Why:** Six locations where the schema takes a `z.string()` and the
-handler comma-splits. An LLM that puts a comma in a `fileRefs` path or
-a `decisions` text silently corrupts the field. Removes a class of
-silent corruption; matches JSON-Schema norms LLM callers expect.
-
-**Approach:** Change to `z.array(z.string())` throughout. Remove the
-`splitCsv` helpers. Update tool descriptions to drop the
-"comma-separated" hint.
-
-**Effort:** S.
-
-**Revisit if:** never.
-
----
-
-### R-008 — Trim server `instructions` block; pull `memory-context-pressure` out of mandatory flow
-
-**Where:** `src/server.ts:86-103` (the McpServer `instructions`
-payload), `src/context-pressure.ts:28-58` (return strings).
-
-**Why:** 600+ characters of MANDATORY-shouty protocol binds the LLM to
-a 6-step handoff dance every session, assumes Claude Code (mentions
-`/compact`), and primes hypervigilance. It overlaps with the
-autonomous stop-hook that does the same job server-side. The
-`memory-context-pressure` tool itself is honor-system telemetry —
-the LLM self-reports a 4-level scale with no grounding signal.
-
-**Approach:** Shrink the `instructions` block to three declarative
-lines describing what the server does. Move trigger-language ("call
-before answering about prior work", etc.) into per-tool descriptions
-where it's contextual. Derive `memory-context-pressure` level
-server-side from the transcript the stop hook already reads; keep
-the LLM-driven tool for manual override only, gated on an optional
-`tokensEstimate` parameter when called.
-
-**Effort:** S.
-
-**Revisit if:** post-rename (R-001) someone wants to relitigate the
-prescriptiveness question.
-
----
-
-### R-009 — Strip benchmark-only knobs off `memory-ingest`
-
-**Where:** `src/server.ts:291-293` (`skipKgExtraction`,
-`skipDailyEntry`, `awaitSideEffects`).
-
-**Why:** Documented in-schema as "benchmark harnesses only." Shipping
-them on the production tool surface costs tokens (every LLM reads the
-descriptions), invites misuse, and confuses tool selection. Keep them
-on the library API only (`src/index.ts`).
-
-**Approach:** Remove from MCP server registration. Leave the
-underlying handler args; just don't expose them on the schema.
-
-**Effort:** XS.
-
-**Revisit if:** the benchmark harness moves out of process and needs
-to drive ingestion through the MCP surface (we'd add a separate
-benchmark tool, not re-expose these).
-
----
 
 ### R-010 — Bench a cross-encoder reranker on top-30
 
@@ -272,28 +86,6 @@ no improvement" with the test details).
 
 ---
 
-### R-011 — Swap MiniLM-L6-v2 → bge-small-en-v1.5
-
-**Where:** `src/storage.ts` (embedding model reference), and
-config / utils for the contextual prefix.
-
-**Why:** Same 384-dim, same ONNX runtime, same DB schema. MTEB
-retrieval avg ~51.7 vs MiniLM's ~41.9. The drop-in upgrade with the
-highest expected lift / lowest schema risk in the project.
-
-**Approach:** Update the model path. Audit and update the
-`buildContextPrefix` in `src/utils.ts:77-108` (or remove it; BGE-small
-uses empty prefix). Run a full corpus re-embed pass. Verify the
-similarity floor at `src/search.ts:120` still calibrates correctly
-against the alien-query floor test.
-
-**Effort:** M (mostly the re-embed and prefix audit).
-
-**Revisit if:** the floor calibration fails and we'd need to retune
-multiple thresholds — punt to the model-abstraction work
-(DEBT-008).
-
----
 
 ### R-012 — Add a tuned-BM25 baseline + 3-dataset BEIR OOD benchmark
 
@@ -319,30 +111,6 @@ methodology claim, not optional.
 
 ---
 
-### R-013 — Wire HippoRAG PPR into search.ts (or delete `graph-rerank.ts`)
-
-**Where:** `src/graph-rerank.ts:175-298` (full PPR implementation,
-unwired); `src/graph-rerank.ts` 1-hop lite variant
-(`graphAwareRerank`, also unwired); `src/search.ts` integration
-point.
-
-**Why:** Dead code that implies a shipped feature. Current state is
-the worst: cognitive overhead in the codebase, the competitive audit
-claims "przm has absorbed the HippoRAG lesson" when in fact the
-lesson isn't running in production. Either wire it (predicted +2-5pp
-on multi-hop questions) or delete it (removes a false implied claim).
-
-**Approach:** Add a `graphRerank: 'off' | 'lite' | 'ppr'` option to
-`memory-search`. Wire after candidate scoring, before the token
-budget cap. Bench against existing benchmark suite plus the OOD set
-from R-012. If results don't justify keeping it, delete the file.
-
-**Effort:** S (wire) or XS (delete).
-
-**Revisit if:** the bench is ambiguous; deletion is always available
-as the fallback.
-
----
 
 ## P2 — ship this year
 
@@ -445,18 +213,19 @@ the WHERE clause. Replace with explicit boolean params on
 These are real and tracked but not load-bearing. Address opportunistically
 or bundle into a "tidy week."
 
-- Replace IDF-weighted bag-of-words with real BM25
-  (`src/search.ts:160-211, 512-559`). Small absolute gain (+1-2pp on
-  rare-term queries) but removes a "your hybrid isn't actually using
-  BM25" honesty issue.
+- Ground `memory-context-pressure` server-side from the transcript the
+  stop hook already reads, keeping the tool for manual override only
+  (the unshipped half of R-008; the instructions trim landed
+  2026-09-01).
+
+- Replace IDF-weighted bag-of-words with a real persisted BM25 index
+  (`src/search.ts`). The in-memory listChunks cache (DEBT-021,
+  2026-09-01) removes the per-query full scan but the honesty issue
+  and restart cost remain.
 - Bounded `listChunks` and aggregate-query `getTaxonomy`
   (`src/storage-postgres.ts:243-249, 302-312`). Unbounded full table
   scans break at scale. Switch to native
   `SELECT domain, metadata->>'topic', COUNT(*) FROM chunks GROUP BY 1, 2`.
-- Canonical predicate vocabulary in KG (`src/kg-extractor.ts`,
-  `src/knowledge-graph.ts:49`). Predicates are free-text after
-  `.toLowerCase()`. Define a closed enum so `memory-kg-query`
-  queries are reliable.
 - Persistent source dedup cache or document the limitation
   (`src/wal.ts:168-198`). In-memory only; restart loses it.
 - LanceDB schema migration runner (`src/storage-file.ts:77-79`).
@@ -468,8 +237,9 @@ or bundle into a "tidy week."
   (`src/storage-adapter.ts:37-48` vs `src/handoff.ts:21`).
 - Pin the `pg` driver in regular `dependencies` with version range,
   add `@types/pg` (`package.json`, `src/storage-postgres.ts:41-44`).
-- Merge `memory-budget` into `memory-search` with optional
-  `budgetTokens` (`src/server.ts:190-269`).
+- Delete the standalone `memory-budget` tool now that `memory-search`
+  accepts `budgetTokens` (shipped 2026-09-01); breaking, so bundle with
+  the v2 alias removal.
 - Make `memory-extract.messages` a real array, not a JSON-encoded
   string (`src/server.ts:461-526`).
 - Restructure `memory-ingest` duplicate response to include

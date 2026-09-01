@@ -232,6 +232,12 @@ refuses with instructions rather than corrupting the column.
 
 ## DEBT-009 — No reranker (intentional, but track the trade-off)
 
+**Update (2026-09-01):** the `memory-search` handler was found calling
+the LLM listwise reranker (`selectRelevant`) whenever an API key was
+configured — exactly the path this entry warns against, and one the
+benchmarks never exercised. Removed from the handler; the function
+survives only for the benchmark harnesses that call it explicitly.
+
 **Where:** `src/reranker.ts` exists as a stub — Engram intentionally
 ships without an LLM reranker.
 
@@ -417,3 +423,43 @@ after any write still loads every non-archive row, and IDF weights are still
 recomputed per query over the full corpus. The real fix remains R-012: a
 persisted BM25 index updated incrementally at ingest, which also makes the
 "hybrid BM25" naming honest.
+
+---
+
+## Resolved (2026-07-07) — R-011: MiniLM-L6-v2 → bge-small-en-v1.5
+
+Shipped in 1.1.0 with model-family profiles, the `reembed` CLI, and
+floors recalibrated against production-shaped content (0.42, commit
+fc03ea2). Ledger entry added late; DEBT-008 recorded the abstraction
+half at the time.
+
+---
+
+## Resolved (2026-09-01) — R-008: Trim server `instructions` block
+
+Instructions cut to three declarative lines; trigger language lives in
+the tool descriptions. The server-side grounding of
+`memory-context-pressure` did not ship and moved to the backlog.
+
+---
+
+## Resolved (2026-09-01) — R-013: Graph rerank wired, lite default
+
+`graphRerank` is a `memory-search` option with lite mode on by default
+(self-no-ops without graph data); both modes fetch the triple store
+once per call. Benching against the R-012 OOD set is still owed.
+
+---
+
+## Resolved (2026-09-01) — Audit fix set (v1.3.0)
+
+September audit findings, all shipped in one branch: hook data dir
+honors `PRZM_MEMORY_DATA_DIR` and defaults to `~/.claude/przm-memory`;
+stale engram-* names swept from commands and hook docs; short-term
+chunks gained an archive exit path and the three retention knobs are
+finally read; engram-* aliases moved behind
+`PRZM_MEMORY_LEGACY_ALIASES` (surface 49 → 29); LLM KG extraction with
+a closed 15-predicate vocabulary runs batched in maintenance with a
+one-shot backfill; ingest-time taxonomy normalization plus a
+conservative variant-merge pass; maintenance writes a daily diary
+digest; handoff stamps no longer collide within the same second.
