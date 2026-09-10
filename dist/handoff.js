@@ -16,7 +16,27 @@ function handoffMdPath(dataDir, stamp) {
 /**
  * Write a handoff note. Persists BOTH JSON (machine-readable) and markdown (human-readable).
  */
-export function writeHandoff(dataDir, note) {
+/**
+ * Some MCP clients bleed the closing tag of one parameter and the opening of the next into a
+ * string value. Seen on a real handoff: currentTask ended with "</currentTask>" and the whole
+ * "completed" array as text, while "completed" itself arrived empty. Strip it from every string
+ * before the note is written.
+ */
+function cleanText(value) {
+    return value.replace(/<\/[a-zA-Z]+>[\s\S]*$/, '').replace(/<parameter name="[^"]*">[^\n]*/g, '').trim();
+}
+function cleanNote(note) {
+    const out = { ...note };
+    for (const [k, v] of Object.entries(out)) {
+        if (typeof v === 'string')
+            out[k] = cleanText(v);
+        else if (Array.isArray(v))
+            out[k] = v.map(x => (typeof x === 'string' ? cleanText(x) : x)).filter(x => x !== '');
+    }
+    return out;
+}
+export function writeHandoff(dataDir, rawNote) {
+    const note = cleanNote(rawNote);
     const dir = handoffDir(dataDir);
     // 0700 = owner-only access. Handoffs contain "where we left off"
     // session context -- file refs, decisions, open questions. Not

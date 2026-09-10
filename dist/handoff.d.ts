@@ -34,10 +34,7 @@ export interface HandoffNote {
     /** Anything else the next agent MUST know — hidden constraints, quirks, gotchas */
     notes: string;
 }
-/**
- * Write a handoff note. Persists BOTH JSON (machine-readable) and markdown (human-readable).
- */
-export declare function writeHandoff(dataDir: string, note: Omit<HandoffNote, 'timestamp'>): HandoffNote;
+export declare function writeHandoff(dataDir: string, rawNote: Omit<HandoffNote, 'timestamp'>): HandoffNote;
 export declare function readHandoff(dataDir: string, identifier?: string): HandoffNote | null;
 export interface HandoffListEntry {
     stamp: string;
