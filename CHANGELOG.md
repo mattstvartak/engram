@@ -5,6 +5,83 @@ All notable changes to `@onenomad/przm-memory` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-09
+
+### Added
+
+- **Inferred recall outcomes.** The feedback loop behind promotion,
+  decay and edge strengthening was fed only by an agent calling
+  `memory-outcome`, and agents do not: one measured session made five
+  searches, seven ingests and zero outcome calls. The stop hook now
+  grades `memory-search` results from the transcript with no LLM. Once
+  a search has had a few assistant turns to prove itself, each returned
+  chunk is checked against what the assistant said or did afterwards;
+  a path or an id on its own counts, two identifiers count, prose does
+  not. Used is recorded `helpful`, unused is `irrelevant`. A new
+  SessionEnd hook grades whatever is left with no wait. `corrected` is
+  never inferred, because a substring check cannot tell a wrong memory
+  from an unused one. New CLI: `przm-memory-mcp grade`.
+- **Session-start context.** A SessionStart hook prints the latest
+  handoff (or the crash checkpoint if that is newer), the standing rules
+  ranked by reinforcement, the high-importance corrections and
+  preferences, and memories whose domain matches the working
+  directory. Claude Code adds the output to the session before the
+  first message, so none of it depends on the agent remembering to
+  ask. Capped at about 10k characters; prints nothing if the store is
+  unreachable. New CLI: `przm-memory-mcp context`.
+- **Rule scope.** A procedural rule now carries a `scope`: empty means
+  everywhere, otherwise the project slug of the memory it came from, or
+  a project named in the memory's label ("Stave-admin workflow rule:")
+  carried forward to the memory's later sentences. Session-start
+  context and `formatRulesForPrompt` show a project's rules only inside
+  that project. The file adapter adds the column in place on open.
+- **`przm-memory-mcp rules list | rebuild`.** The table is a function of
+  the correction and preference chunks and the extractor; `rebuild`
+  throws it away and derives it again, grouped by project, with
+  starting confidence seeded from each source memory's importance.
+
+### Changed
+
+- **Rule extraction is a directive gate.** The heuristic extractor fired
+  on any sentence containing "always" or "never", so narrative like
+  "the fix was never half-applied" and facts like "corpse_fx.gd is never
+  saved" became standing rules, and one long memory became several
+  rows. A sentence now has to start as an instruction after an optional
+  label and an optional scoping clause; narration, first-person
+  accounts, facts and fragments do not. The sentence splitter no longer
+  breaks inside backticks or after "e.g.", and text the chunker visibly
+  cut mid-sentence is refused. The LLM prompt says a rule is about how
+  the user works, not what to build.
+- **Restatements reinforce instead of duplicating.** Matching compares
+  content words with dates, quotes and names stripped, on the directive
+  rather than its label, and accepts strong overlap or the shorter rule
+  sitting mostly inside the longer one. Semantic restatements with
+  different vocabulary stay separate; that is the LLM path's job.
+- **Session-start rendering dedupes by ingest source** and strips
+  tool-call markup that had leaked into chunk content, and the rules
+  floor is 0.35 rather than 0.5 because seeded confidence from decayed
+  memories sits lower than the old flat 0.5.
+- **`hooks/` ships in the package** so an installed copy carries its own
+  hooks.
+
+### Fixed
+
+- **Voice bridge inflated confidence on every pass.** `importRulesFromBridge`
+  bumped every matched rule by 0.05 on every maintenance run whether the
+  bridge entry had changed or not, and read a file hardcoded under
+  `$HOME` even from inside the test suite; that was the standing
+  `reembed-maintenance` failure. A bridge entry now reinforces a rule
+  only when it is newer than the rule, and the path is read at call time
+  and overridable with `PRZM_MEMORY_BRIDGE_PATH`.
+- **Crash checkpoint was unreadable.** The stop hook writes one plain
+  `session-checkpoint.json` with no name and no stamp, so neither of
+  `readHandoff`'s lookups could see it. Session-start context reads it
+  by path.
+- **Build stripped the executable bit** from `dist/server.js`,
+  `dist/cli.js` and `dist/migrate.js`, so linked binaries broke after
+  every rebuild until someone chmodded them. The build script restores
+  it.
+
 ## [1.3.0] - 2026-09-01
 
 ### Added

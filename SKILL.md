@@ -34,17 +34,23 @@ Search combines multiple signals:
 - **Archive** -> reactivates if recalled again within 7 days
 
 ### Procedural Rules
-Learns behavioral rules from user corrections and explicit instructions. Rules have:
-- **Confidence** (0.0-1.0): reinforced by +0.1, contradicted by -0.2
+Learns behavioral rules from user corrections and explicit instructions. A sentence becomes a rule only when it reads as a directive, after an optional label such as "Rule from Matt:"; narration, facts and fragments do not. Rules have:
+- **Scope**: empty means everywhere; otherwise the project the memory came from, or a project named in its label. A project's rules are shown only inside that project.
+- **Confidence** (0.0-1.0): seeded from the source memory's importance, reinforced by +0.1, contradicted by -0.2
 - **Domain**: code, communication, workflow, preference, general
+- Restatements reinforce the existing rule instead of adding another
 - Dead rules (confidence = 0) are pruned automatically
+- `przm-memory-mcp rules list | rebuild` shows the table or derives it again from the correction and preference memories
 
 ### Recall Outcomes
-When you mark recalled memories as helpful/corrected/irrelevant:
+The bundled stop and session-end hooks grade `memory-search` results from the transcript: a returned memory whose distinctive material shows up in what the assistant later said or did is **helpful**, one that never does is **irrelevant**. You only need `memory-outcome` for **corrected**, which means the memory was wrong and cannot be inferred.
 - **Helpful**: importance +0.05, triggers reconsolidation
 - **Corrected**: importance -0.10
 - **Irrelevant**: importance -0.05
 - Co-recalled helpful memories strengthen their graph edges
+
+### Session Start
+The bundled SessionStart hook prints the latest handoff (or the crash checkpoint if newer), the standing rules, the high-importance corrections and preferences, and memories about the current project, and Claude Code adds it to the session before the first message. Read it and act on it; do not re-query for what it already put there.
 
 ## Session State (Hot RAM)
 
@@ -52,5 +58,5 @@ A fast-write scratchpad for active session state that survives compaction. Persi
 
 ## Configuration
 
-Set `ENGRAM_DATA_DIR` to change the data directory (default: `~/.claude/engram`).
+Set `PRZM_MEMORY_DATA_DIR` to change the data directory (default: `~/.claude/przm-memory`; `ENGRAM_DATA_DIR` still works).
 Optional: set `MEM0_API_KEY` environment variable if using Mem0 cloud extraction.
