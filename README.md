@@ -197,6 +197,12 @@ Borrowed from neuroscience. When a memory gets recalled during a relevant conver
 
 This only triggers if the memory hasn't been reconsolidated in the last 24 hours (to prevent over-updating) and requires an LLM API key.
 
+### Session-start context
+
+Rules and handoffs only helped when the agent remembered to ask for them, and measured over a day it did not: a rule written at importance 0.95 in the morning was never queried that afternoon, and the mistake it described was made again. So the store pushes instead of waiting to be pulled.
+
+The `SessionStart` hook runs `przm-memory-mcp context` and Claude Code adds its output to the session before the first message. Four sections, each capped and the whole capped at about 10k characters: the latest handoff or the crash checkpoint if that is newer, the standing procedural rules by confidence, the corrections and preferences with high importance, and memories whose domain matches the working directory's name. No LLM. If the store is unreachable it prints nothing, because a memory problem must never block a session.
+
 ### Recall Outcomes
 
 A feedback loop that lets the system learn which memories are actually useful:

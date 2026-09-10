@@ -19,6 +19,7 @@ import { loadConfig } from './config.js';
 import { Storage } from './storage.js';
 import { search, formatRecalledMemories } from './search.js';
 import { gradeTranscript } from './inferred-outcome.js';
+import { buildSessionContext } from './session-context.js';
 const HELP = `przm-memory-mcp — memory CLI
 
 Usage:
@@ -31,6 +32,9 @@ Usage:
                                                                reclaim disk
   przm-memory-mcp grade   --transcript <path> --session <id>   infer recall outcomes from a
                           [--final] [--min-turns N] [--dry-run]  Claude Code transcript
+  przm-memory-mcp context [--cwd <dir>] [--max-chars N]        print session-start context:
+                                                               handoff, rules, corrections,
+                                                               project memories
   przm-memory-mcp login   <server-url> | --server <url>        pair with przm Cloud
   przm-memory-mcp logout                                       remove cached credentials
   przm-memory-mcp help                                         this message
@@ -367,6 +371,33 @@ async function runGrade(argv) {
     }, String(values.transcript), String(values.session), { final: !!values.final, minTurnsAfter: minTurns ?? undefined, dryRun: !!values['dry-run'] });
     process.stdout.write(JSON.stringify(summary) + '\n');
 }
+const CONTEXT_OPTS = {
+    cwd: { type: 'string' },
+    'max-chars': { type: 'string' },
+};
+/**
+ * Print what a fresh session should know before its first message. Called by the
+ * SessionStart hook, whose stdout Claude Code adds to context. Any failure prints
+ * nothing and exits 0: a memory problem must never block a session.
+ */
+async function runContext(argv) {
+    const { values } = parseArgs({ args: argv, options: CONTEXT_OPTS, allowPositionals: false });
+    const maxChars = parseIntOpt(values['max-chars'], 'max-chars');
+    try {
+        const config = loadConfig();
+        const storage = new Storage(config.dataDir);
+        await storage.ensureReady();
+        const out = await buildSessionContext(storage, config.dataDir, {
+            cwd: values.cwd ? String(values.cwd) : process.cwd(),
+            maxChars: maxChars ?? undefined,
+        });
+        if (out)
+            process.stdout.write(out + '\n');
+    }
+    catch {
+        // Quiet by design.
+    }
+}
 async function main() {
     const [, , sub, ...rest] = process.argv;
     if (!sub || sub.startsWith('-')) {
@@ -394,6 +425,9 @@ async function main() {
             return;
         case 'grade':
             await runGrade(rest);
+            return;
+        case 'context':
+            await runContext(rest);
             return;
         case 'login':
             await runLoginCmd(rest);

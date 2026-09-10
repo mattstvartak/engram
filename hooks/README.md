@@ -4,6 +4,9 @@ Claude Code hooks that keep memory saves and handoff lifelines flowing without b
 
 ## What they do
 
+### `engram_sessionstart_hook.sh` (SessionStart event)
+Fires when a session starts, resumes, clears, or returns from compaction. Prints the latest handoff (or the crash checkpoint if that is newer), the standing procedural rules, the corrections and preferences the user has given, and memories about the current project. Claude Code adds the output to the session context, so none of it depends on the agent remembering to ask. Capped at about 10k characters. Quiet on any failure.
+
 ### `engram_stop_hook.sh` (Stop event)
 Fires after every assistant turn. **Non-blocking.** On each turn it:
 
@@ -38,6 +41,16 @@ Add to your Claude Code settings (global `~/.claude/settings.json` or per-projec
 ```json
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /path/to/engram/hooks/engram_sessionstart_hook.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
