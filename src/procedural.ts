@@ -1,6 +1,7 @@
 import type { SmartMemoryConfig, ProceduralRule } from './types.js';
 import { Storage } from './storage.js';
 import { llmComplete, isLlmAvailable } from './llm.js';
+import { splitSentences } from './sentences.js';
 
 // ── LLM Extraction Prompt ───────────────────────────────────────────
 
@@ -247,19 +248,7 @@ export function scopeFromLabel(label: string, knownScopes: Iterable<string>): st
  * "etc." and "vs.". Semicolons count as a break: a correction often chains two directives.
  */
 export function sentencesOf(content: string): string[] {
-  // One placeholder per character, so what was masked comes back as what it was. Built from
-  // character codes rather than written as escapes so the source stays plain ASCII.
-  const PUNCT = ['.', '!', '?', ';'];
-  const holder = (i: number) => String.fromCharCode(1 + i);
-  const HOLDERS = new RegExp('[' + holder(0) + '-' + holder(3) + ']', 'g');
-  const mask = (m: string) => m.replace(/[.!?;]/g, ch => holder(PUNCT.indexOf(ch)));
-  const masked = content
-    .replace(/`[^`]*`/g, mask)
-    .replace(/\b(?:e\.g|i\.e|etc|vs)\./gi, mask);
-  return masked
-    .split(/(?<=[.!?;])\s+|(?<=\n)/)
-    .map(x => x.replace(HOLDERS, ch => PUNCT[ch.charCodeAt(0) - 1]).trim())
-    .filter(x => x.length > 10 && x.length < 400);
+  return splitSentences(content, { semicolons: true, newlines: true }).filter(x => x.length > 10 && x.length < 400);
 }
 
 function inferDomain(rule: string): ProceduralRule['domain'] {

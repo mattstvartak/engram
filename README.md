@@ -214,6 +214,14 @@ przm-memory-mcp rules rebuild
 
 Known gap: the chunker splits long memories at sentence boundaries with the same naive rule the old extractor used, so a memory can be stored cut at "e.g." or inside a parenthesis. The extractor refuses to mint a rule from text that is visibly cut, but the underlying chunk stays cut until the chunker learns the same abbreviations. Rules imported from the Voice bridge are recreated on the next maintenance pass, and the bridge only reinforces a rule when the bridge entry is newer than the rule's last update, so an unchanged file cannot inflate confidence pass after pass.
 
+### Repairs and history
+
+`przm-memory-mcp grade --all` grades every Claude Code transcript on the machine and records the outcomes, so a store that predates inferred outcomes gets its history back. On this machine: 210 transcripts, 158 searches, 513 helpful and 745 irrelevant chunk outcomes, four minutes, no parser failures.
+
+`przm-memory-mcp repair [--dry-run] [--rejoin-all]` fixes two things the measurements found. The chunker used to split long memories at sentence boundaries with the same naive rule the extractor had, and stored pieces cut at "(e.g." or inside a backticked command; pieces of one ingest share a source and were written within seconds, so `repair` puts those memories back together through the normal ingest path, embedded fresh, and deletes the pieces. `--rejoin-all` does the same for every split memory, cut or not, which is the experiment for whether splitting hurts recall; run it on a copy and measure. And corrections and preferences the user stated explicitly are lifted to the instruction floor the consolidator now keeps them at: a rule the user set does not become less true with age, and 314 of them had decayed to 0.15 and were losing retrieval to passing notes.
+
+The chunker now keeps memories under 1,200 characters whole. Measured on a live store, 94% of chunks were pieces of a longer memory, and two of three retrieval misses on a golden set were pieces whose siblings held the rest of the answer.
+
 ### Session-start context
 
 Rules and handoffs only helped when the agent remembered to ask for them, and measured over a day it did not: a rule written at importance 0.95 in the morning was never queried that afternoon, and the mistake it described was made again. So the store pushes instead of waiting to be pulled.

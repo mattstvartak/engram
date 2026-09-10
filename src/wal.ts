@@ -135,6 +135,17 @@ export function pendingSideEffectCount(): number {
  * Immediately persist one or more memory entries.
  * Designed to be called mid-conversation, before the agent responds.
  */
+/**
+ * Some MCP clients bleed the tool call's closing tag and the next parameter's opening into a
+ * multi-line content value. Measured on a live store: 113 chunks carried it. Strip it before
+ * anything is stored rather than at every reader.
+ */
+export function stripLeakedMarkup(content: string): string {
+  return content
+    .replace(/<\/content>[\s\S]*$/, '')
+    .replace(/<parameter name="[^"]*">[^\n]*/g, '');
+}
+
 export async function ingest(
   config: SmartMemoryConfig,
   storage: Storage,
@@ -151,7 +162,7 @@ export async function ingest(
   for (const entry of entries) {
     if (!entry.content || entry.content.trim().length < 5) continue;
 
-    const trimmedContent = entry.content.trim();
+    const trimmedContent = stripLeakedMarkup(entry.content).trim();
     const normDomain = normalizeDomain(entry.domain);
     const normTopic = normalizeTaxonomyValue(entry.topic);
 

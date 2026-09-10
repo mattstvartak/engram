@@ -64,8 +64,11 @@ export interface GradeOptions {
 }
 
 export interface GradeSummary {
+  /** Searches graded on this run. */
   graded: number;
+  /** Chunks marked helpful across those searches; a search returns several chunks. */
   helpful: number;
+  /** Chunks marked irrelevant across those searches. */
   irrelevant: number;
   immature: number;
   alreadyGraded: number;

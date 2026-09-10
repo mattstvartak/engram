@@ -6,6 +6,8 @@
  * Short content (< splitThreshold) passes through unchanged.
  */
 
+import { splitSentences } from './sentences.js';
+
 export interface ChunkSplitResult {
   chunks: string[];
   needsSplit: boolean;
@@ -14,16 +16,20 @@ export interface ChunkSplitResult {
 export interface ChunkerOptions {
   /** Minimum sub-chunk length in characters (default: 200) */
   minChunkLength?: number;
-  /** Maximum sub-chunk length in characters (default: 600) */
+  /** Maximum sub-chunk length in characters (default: 1200) */
   maxChunkLength?: number;
-  /** Content length threshold to trigger splitting (default: 500) */
+  /** Content length threshold to trigger splitting (default: 1200) */
   splitThreshold?: number;
 }
 
+// Measured on a live store: with a 500 character threshold, 94% of chunks were pieces of a
+// longer memory, and two of three retrieval misses on a golden set were pieces whose siblings
+// held the rest of the answer. A memory under 1,200 characters is about 300 tokens, well inside
+// what the embedding model reads whole, so it stays whole.
 const DEFAULTS: Required<ChunkerOptions> = {
   minChunkLength: 200,
-  maxChunkLength: 600,
-  splitThreshold: 500,
+  maxChunkLength: 1200,
+  splitThreshold: 1200,
 };
 
 /**
@@ -125,7 +131,7 @@ function splitOnSpeakerTurns(text: string, maxLength: number): string[] {
  * Split text at sentence boundaries, keeping chunks under maxLength.
  */
 function splitAtSentences(text: string, maxLength: number): string[] {
-  const sentences = text.split(/(?<=[.!?])\s+/);
+  const sentences = splitSentences(text);
   const chunks: string[] = [];
   let current = '';
 

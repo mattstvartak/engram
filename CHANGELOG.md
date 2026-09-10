@@ -5,6 +5,39 @@ All notable changes to `@onenomad/przm-memory` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-09-10
+
+### Added
+
+- **`grade --all`.** Grades every Claude Code transcript on the machine
+  and records recall outcomes, so a store that predates inferred
+  outcomes gets its history back. Each search is still graded once.
+- **`repair`.** Rejoins memories the chunker stored cut mid-sentence,
+  through the ingest path so the merged memory is embedded fresh, and
+  lifts user-stated corrections and preferences to the instruction
+  floor. `--dry-run` reports; `--rejoin-all` rejoins every split memory
+  for measuring whether splitting hurts recall.
+- **Instruction floor.** Corrections and preferences with `origin:
+  user` no longer decay below 0.5 in either decay path. A rule the user
+  set does not become less true with age; 314 of them had reached the
+  0.15 floor on a live store.
+- **Chunker tests**, the first the chunker has had.
+
+### Changed
+
+- **One sentence splitter.** The chunker and the rule extractor both
+  split at `[.!?]` with no protection for abbreviations or backticks,
+  which is how memories came to be stored ending in "(e.g." for
+  months. Both now use `splitSentences`, which masks backtick spans
+  and "e.g.", "i.e.", "etc." and "vs." before splitting.
+- **Chunker threshold 500 -> 1200.** Measured on a live store, 94% of
+  chunks were pieces of a longer memory, and two of three retrieval
+  misses on a golden set were pieces whose siblings held the rest of
+  the answer. A memory under 1,200 characters is about 300 tokens and
+  stays whole.
+- **`grade` output** documents that `graded` counts searches while
+  `helpful` and `irrelevant` count chunks.
+
 ## [1.4.0] - 2026-09-09
 
 ### Added
