@@ -105,5 +105,20 @@ node -e "
   })();
 " 2>/dev/null
 
+# Grade any memory-search results that have had a few turns to prove themselves. This is the
+# recall feedback loop that used to depend on the agent calling memory-outcome, which it never
+# did. Backgrounded so the hook returns at once; the CLI opens storage only when there is
+# something new to record.
+CLI="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/dist/cli.js"
+if [ -f "$CLI" ] && command -v node >/dev/null 2>&1; then
+  read -r TRANSCRIPT SESSION < <(printf '%s' "$PAYLOAD" | node -e '
+    let p = {}; try { p = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch {}
+    process.stdout.write((p.transcript_path || "") + " " + (p.session_id || ""));
+  ' 2>/dev/null)
+  if [ -n "$TRANSCRIPT" ] && [ -n "$SESSION" ]; then
+    PRZM_MEMORY_DATA_DIR="$DATA_DIR" nohup node "$CLI" grade --transcript "$TRANSCRIPT" --session "$SESSION" >/dev/null 2>&1 &
+  fi
+fi
+
 # Always approve — never interrupt the user's flow with a block.
 echo '{"decision":"approve"}'

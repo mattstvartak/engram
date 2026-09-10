@@ -207,6 +207,20 @@ A feedback loop that lets the system learn which memories are actually useful:
 
 If a memory gets marked irrelevant 3+ times out of the last 5 recalls, its importance drops sharply and it may get archived.
 
+#### Inferred outcomes
+
+`memory-outcome` is still there, but the loop no longer depends on an agent remembering to call it, because agents do not. Measured over one working session: five searches, seven ingests, zero outcomes recorded. Everything downstream of that signal was starved.
+
+The stop hook now grades searches mechanically from the Claude Code transcript, with no LLM. Once a `memory-search` result has had a few assistant turns to prove itself, each returned chunk is checked against everything the assistant said or did afterwards. Distinctive material counts: a file path or an id on its own, two code identifiers, a few numbers or proper nouns. Enough of that and the chunk is recorded **helpful**; none of it and it is **irrelevant**. The session-end hook grades whatever is left with no wait. Each search is graded once, tracked per session under `<dataDir>/outcomes/`.
+
+Two limits, stated plainly. It never infers **corrected**, because a substring check cannot tell a wrong memory from an unused one, so that stays an explicit call. And an assistant that quotes a search result back without acting on it reads as helpful. The signal that matters most is the negative one: until this, nothing was ever marked irrelevant at all, so every memory ever returned looked equally good.
+
+Run it by hand to see what it would do:
+
+```
+przm-memory-mcp grade --transcript ~/.claude/projects/<project>/<session>.jsonl --session <id> --final --dry-run
+```
+
 ### Knowledge Graph Auto-Population
 
 When a memory is ingested, the system heuristically extracts entity-relationship triples and adds them to the knowledge graph automatically. It detects 12 relationship types including `works-at`, `uses`, `depends-on`, `prefers`, `chose`, `located-in`, and more. This means the knowledge graph grows passively as memories accumulate, without needing explicit `engram-kg-add` calls for every fact.

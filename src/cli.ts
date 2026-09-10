@@ -20,6 +20,7 @@ import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { loadConfig } from './config.js';
 import { Storage } from './storage.js';
 import { search, formatRecalledMemories } from './search.js';
+import { gradeTranscript } from './inferred-outcome.js';
 import type { MemoryTier, SearchResult } from './types.js';
 import type { StoredChunk } from './storage.js';
 
@@ -33,6 +34,8 @@ Usage:
                                                                with the active model
   przm-memory-mcp compact                                      prune old table versions,
                                                                reclaim disk
+  przm-memory-mcp grade   --transcript <path> --session <id>   infer recall outcomes from a
+                          [--final] [--min-turns N] [--dry-run]  Claude Code transcript
   przm-memory-mcp login   <server-url> | --server <url>        pair with przm Cloud
   przm-memory-mcp logout                                       remove cached credentials
   przm-memory-mcp help                                         this message
@@ -373,6 +376,40 @@ async function runLogoutCmd(argv: string[]): Promise<void> {
   process.exit(runLogout());
 }
 
+const GRADE_OPTS = {
+  transcript: { type: 'string' },
+  session: { type: 'string' },
+  final: { type: 'boolean' },
+  'min-turns': { type: 'string' },
+  'dry-run': { type: 'boolean' },
+} as const satisfies ParseArgsConfig['options'];
+
+/**
+ * Grade memory-search results from a transcript and record helpful / irrelevant outcomes.
+ * Called by the stop and session-end hooks, so it has to be quiet and cheap: storage is only
+ * opened when a search has matured and not been graded yet.
+ */
+async function runGrade(argv: string[]): Promise<void> {
+  const { values } = parseArgs({ args: argv, options: GRADE_OPTS, allowPositionals: false });
+  if (!values.transcript) fail('grade: --transcript is required');
+  if (!values.session) fail('grade: --session is required');
+  const minTurns = parseIntOpt(values['min-turns'], 'min-turns');
+
+  const config = loadConfig();
+  const summary = await gradeTranscript(
+    config,
+    async () => {
+      const storage = new Storage(config.dataDir);
+      await storage.ensureReady();
+      return storage;
+    },
+    String(values.transcript),
+    String(values.session),
+    { final: !!values.final, minTurnsAfter: minTurns ?? undefined, dryRun: !!values['dry-run'] }
+  );
+  process.stdout.write(JSON.stringify(summary) + '\n');
+}
+
 async function main(): Promise<void> {
   const [, , sub, ...rest] = process.argv;
 
@@ -399,6 +436,9 @@ async function main(): Promise<void> {
       return;
     case 'compact':
       await runCompact(rest);
+      return;
+    case 'grade':
+      await runGrade(rest);
       return;
     case 'login':
       await runLoginCmd(rest);

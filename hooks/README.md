@@ -13,6 +13,11 @@ Fires after every assistant turn. **Non-blocking.** On each turn it:
 
 If the window fills so fast that `/compact` can't rescue it, the checkpoint is the lifeline. Cheap (single transcript read, no LLM), quiet (no block), and always fresh.
 
+It also grades memory-search results. Once a search has had a few assistant turns to prove itself, each returned chunk is checked against what the assistant said and did afterwards and recorded as a **helpful** or **irrelevant** recall outcome. This is the feedback loop that used to depend on the agent calling `memory-outcome`, which it never did. Backgrounded, so the hook still returns at once; storage is only opened when there is something new to record.
+
+### `engram_sessionend_hook.sh` (SessionEnd event)
+Fires once when the session ends. Grades every search the stop hook has not yet graded, with no maturity wait, since nothing else is coming. Foreground; there is nothing left to keep responsive.
+
 ### `engram_precompact_hook.sh` (PreCompact event)
 Fires before context compression — on both manual `/compact` and Claude Code's auto-compact. **Always approves.** The hook's job is to make sure a real handoff exists when compaction fires:
 
@@ -49,6 +54,16 @@ Add to your Claude Code settings (global `~/.claude/settings.json` or per-projec
           {
             "type": "command",
             "command": "bash /path/to/engram/hooks/engram_precompact_hook.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /path/to/engram/hooks/engram_sessionend_hook.sh"
           }
         ]
       }
