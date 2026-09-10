@@ -22,6 +22,7 @@ import { Storage } from './storage.js';
 import { search, formatRecalledMemories } from './search.js';
 import { gradeTranscript } from './inferred-outcome.js';
 import { buildSessionContext } from './session-context.js';
+import { rebuildRules } from './maintenance.js';
 import type { MemoryTier, SearchResult } from './types.js';
 import type { StoredChunk } from './storage.js';
 
@@ -40,6 +41,9 @@ Usage:
   przm-memory-mcp context [--cwd <dir>] [--max-chars N]        print session-start context:
                                                                handoff, rules, corrections,
                                                                project memories
+  przm-memory-mcp rules   list [--scope <slug>] | rebuild      show the rules table, or throw it
+                                                               away and re-derive it from the
+                                                               correction and preference chunks
   przm-memory-mcp login   <server-url> | --server <url>        pair with przm Cloud
   przm-memory-mcp logout                                       remove cached credentials
   przm-memory-mcp help                                         this message
@@ -441,6 +445,34 @@ async function runContext(argv: string[]): Promise<void> {
   }
 }
 
+const RULES_OPTS = {
+  scope: { type: 'string' },
+} as const satisfies ParseArgsConfig['options'];
+
+async function runRules(argv: string[]): Promise<void> {
+  const [action, ...rest] = argv;
+  const { values } = parseArgs({ args: rest, options: RULES_OPTS, allowPositionals: false });
+  const config = loadConfig();
+  const storage = new Storage(config.dataDir);
+  await storage.ensureReady();
+
+  if (action === 'rebuild') {
+    const r = await rebuildRules(config, storage);
+    process.stdout.write(JSON.stringify(r) + '\n');
+    return;
+  }
+  if (action === 'list' || !action) {
+    const rules = (await storage.getRules()).filter(r => values.scope === undefined || (r.scope ?? '') === String(values.scope));
+    rules.sort((a, b) => (a.scope ?? '').localeCompare(b.scope ?? '') || b.reinforcements - a.reinforcements || b.confidence - a.confidence);
+    for (const r of rules) {
+      process.stdout.write(`${(r.scope || 'global').padEnd(16)} ${r.domain.padEnd(13)} c=${r.confidence.toFixed(2)} r=${r.reinforcements} x=${r.contradictions}  ${r.rule}\n`);
+    }
+    process.stdout.write(`${rules.length} rules\n`);
+    return;
+  }
+  fail(`rules: unknown action "${action}" (list | rebuild)`);
+}
+
 async function main(): Promise<void> {
   const [, , sub, ...rest] = process.argv;
 
@@ -473,6 +505,9 @@ async function main(): Promise<void> {
       return;
     case 'context':
       await runContext(rest);
+      return;
+    case 'rules':
+      await runRules(rest);
       return;
     case 'login':
       await runLoginCmd(rest);

@@ -42,8 +42,10 @@ export interface SessionContextOptions {
 
 const DEFAULTS: Required<Omit<SessionContextOptions, 'cwd' | 'now'>> = {
   maxChars: 10_000,
-  maxRules: 20,
-  minRuleConfidence: 0.5,
+  maxRules: 40,
+  // Seeded from source importance, and old memories have decayed; a real rule from a 0.15
+  // importance memory seeds at 0.36 and must still show.
+  minRuleConfidence: 0.35,
   maxCorrections: 10,
   minCorrectionImportance: 0.85,
   maxProjectMemories: 8,
@@ -129,8 +131,16 @@ function handoffSection(dataDir: string): string {
   return lines.join('\n');
 }
 
-async function rulesSection(storage: Storage, o: typeof DEFAULTS): Promise<string> {
+function projectOf(cwd: string | undefined): string {
+  if (!cwd) return '';
+  const p = basename(cwd).toLowerCase();
+  return p === '/' || p === '.' ? '' : p;
+}
+
+async function rulesSection(storage: Storage, cwd: string | undefined, o: typeof DEFAULTS): Promise<string> {
+  const project = projectOf(cwd);
   const rules = (await storage.getRules())
+    .filter(r => !r.scope || r.scope === project)
     .filter(r => r.confidence >= o.minRuleConfidence && r.contradictions <= r.reinforcements)
     .sort((a, b) => b.reinforcements - a.reinforcements || b.confidence - a.confidence)
     .slice(0, o.maxRules);
@@ -148,9 +158,8 @@ function correctionsSection(all: StoredChunk[], o: typeof DEFAULTS): string {
 }
 
 function projectSection(all: StoredChunk[], cwd: string | undefined, o: typeof DEFAULTS): string {
-  if (!cwd) return '';
-  const project = basename(cwd).toLowerCase();
-  if (!project || project === '/' || project === '.') return '';
+  const project = projectOf(cwd);
+  if (!project) return '';
   const mine = dedupe(all
     .filter(c => (c.domain ?? '').toLowerCase() === project)
     .sort((a, b) => b.importance - a.importance || (b.createdAt ?? '').localeCompare(a.createdAt ?? '')))
@@ -169,7 +178,7 @@ export async function buildSessionContext(storage: Storage, dataDir: string, opt
 
   const sections = [
     handoffSection(dataDir),
-    await rulesSection(storage, o),
+    await rulesSection(storage, opts.cwd, o),
     correctionsSection(all, o),
     projectSection(all, opts.cwd, o),
   ].filter(Boolean);

@@ -127,11 +127,18 @@ export class FileStorageAdapter implements StorageAdapter {
     // ── Rules table ──────────────────────────────────────────────
     if (tableNames.includes('rules')) {
       this.rules = await this.db.openTable('rules');
+      // Tables made before rules had a scope get the column added in place, defaulting to
+      // everywhere, which is what every rule was before scope existed.
+      const schema = await this.rules.schema();
+      if (!schema.fields.some(fld => fld.name === 'scope')) {
+        await this.rules.addColumns([{ name: 'scope', valueSql: "''" }]);
+      }
     } else {
       this.rules = await this.db.createTable('rules', [{
         id: '__init__',
         rule: '',
         domain: 'general',
+        scope: '',
         confidence: 0.5,
         reinforcements: 0,
         contradictions: 0,
@@ -409,6 +416,7 @@ export class FileStorageAdapter implements StorageAdapter {
       id: rule.id,
       rule: rule.rule,
       domain: rule.domain,
+      scope: rule.scope ?? '',
       confidence: rule.confidence,
       reinforcements: rule.reinforcements,
       contradictions: rule.contradictions,
@@ -425,6 +433,7 @@ export class FileStorageAdapter implements StorageAdapter {
         id: r.id,
         rule: r.rule,
         domain: r.domain,
+        scope: r.scope ?? '',
         confidence: r.confidence,
         reinforcements: r.reinforcements,
         contradictions: r.contradictions,

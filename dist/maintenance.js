@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { consolidate } from './consolidator.js';
 import { syncBridge } from './procedural-bridge.js';
-import { extractRules } from './procedural.js';
+import { extractRules, normalizeScope } from './procedural.js';
 import { llmExtractAndPersist } from './kg-extractor.js';
 import { isLlmAvailable } from './llm.js';
 import { writeDiaryEntry, listDiaryDates } from './diary.js';
@@ -60,15 +60,49 @@ async function backfillRules(config, storage) {
         .slice(0, 500);
     if (sources.length === 0)
         return 0;
+    // Batches are grouped by project so a rule takes the scope of the chunk it came from. A
+    // mixed batch would have to guess, and guessing "everywhere" is how a Stave copy rule ended
+    // up in every session.
+    // Also grouped by importance, so a rule from a 0.95 correction starts above one from a
+    // passing preference instead of every rule sitting level at 0.5 after a rebuild.
+    const knownScopes = new Set(chunks.map(c => normalizeScope(c.domain)).filter(Boolean));
+    const groups = new Map();
+    for (const c of sources) {
+        const key = `${normalizeScope(c.domain)}|${Math.round(c.importance * 10) / 10}`;
+        const list = groups.get(key) ?? [];
+        list.push(c);
+        groups.set(key, list);
+    }
     const BATCH = 20;
-    for (let i = 0; i < sources.length; i += BATCH) {
-        const batch = sources.slice(i, i + BATCH);
-        try {
-            await extractRules(config, storage, batch.map(c => ({ role: 'user', content: c.content })));
+    for (const [key, list] of groups) {
+        const [scope, imp] = key.split('|');
+        const seedConfidence = 0.3 + 0.4 * Number(imp);
+        for (let i = 0; i < list.length; i += BATCH) {
+            const batch = list.slice(i, i + BATCH);
+            try {
+                await extractRules(config, storage, batch.map(c => ({ role: 'user', content: c.content })), undefined, { scope, knownScopes, seedConfidence });
+            }
+            catch { /* best-effort per batch */ }
         }
-        catch { /* best-effort per batch */ }
     }
     return sources.length;
+}
+/**
+ * Throw the rules table away and derive it again from the correction and preference chunks.
+ * The table is meant to be a function of those chunks and the extractor; when the extractor
+ * changes, this is how the table catches up, and it is reproducible where hand-pruning is not.
+ */
+export async function rebuildRules(config, storage) {
+    const old = await storage.getRules();
+    for (const r of old)
+        await storage.deleteRule(r.id);
+    const state = readMaintenanceState(config.dataDir);
+    state.rulesBackfilledAt = null;
+    writeMaintenanceState(config.dataDir, state);
+    const sources = await backfillRules(config, storage);
+    state.rulesBackfilledAt = new Date().toISOString();
+    writeMaintenanceState(config.dataDir, state);
+    return { deleted: old.length, sources, rules: (await storage.getRules()).length };
 }
 /**
  * LLM knowledge-graph extraction during maintenance. The regex extractor

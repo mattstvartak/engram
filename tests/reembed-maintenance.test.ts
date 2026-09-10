@@ -23,6 +23,9 @@ import { join } from 'node:path';
 
 process.env.ENGRAM_NO_AUTO_CLOUD = '1';
 process.env.ENGRAM_SKIP_EMBED = '1';
+// The Voice bridge reads a file under $HOME by default; point it somewhere empty so the real
+// machine's bridge rules cannot leak into a test that counts rules.
+process.env.PRZM_MEMORY_BRIDGE_PATH = join(tmpdir(), `engram-bridge-${process.pid}.json`);
 delete process.env.OPENROUTER_API_KEY;
 delete process.env.ENGRAM_LLM_BASE_URL;
 

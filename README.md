@@ -197,6 +197,23 @@ Borrowed from neuroscience. When a memory gets recalled during a relevant conver
 
 This only triggers if the memory hasn't been reconsolidated in the last 24 hours (to prevent over-updating) and requires an LLM API key.
 
+### Procedural rules
+
+Rules are extracted from correction and preference memories and carry a **scope**: empty means the rule is about how the user works and applies everywhere; otherwise it is the slug of the project the memory was ingested under. Session-start context and `formatRulesForPrompt` only show a project's rules inside that project, which is what stopped a Stave copy rule from appearing in every session.
+
+Without an LLM key, extraction is a directive gate rather than a keyword match. A sentence has to read as an instruction: it starts with one, after an optional label such as "Rule from Matt:" and an optional scoping clause such as "In the DB7001 workflow, ...". The old extractor fired on any sentence containing "always" or "never", which turned narrative like "the fix was never half-applied" into a standing rule and split one long memory into half a dozen rows. Restatements now reinforce the existing rule instead of adding another: the match compares content words with dates, quotes and names removed, and accepts either strong overlap or the shorter rule sitting mostly inside the longer one.
+
+The table is meant to be a function of the chunks and the extractor, so when the extractor changes the table can be re-derived rather than hand-pruned:
+
+```
+przm-memory-mcp rules list [--scope <slug>]
+przm-memory-mcp rules rebuild
+```
+
+`rebuild` deletes every rule, clears the one-shot backfill marker, and replays the correction and preference chunks grouped by project so each rule takes the scope of the memory it came from. When a memory carries no domain but its label names a project the store already knows ("Stave-admin workflow rule:"), the rule is scoped from the label, and that label carries forward to the memory's later sentences. A rule's starting confidence is seeded from the importance of the memory it came from, so a rule from a 0.95 correction starts above one from a passing note rather than every rule sitting level at 0.5; old memories have decayed, so the session-start display floor is 0.35 rather than 0.5.
+
+Known gap: the chunker splits long memories at sentence boundaries with the same naive rule the old extractor used, so a memory can be stored cut at "e.g." or inside a parenthesis. The extractor refuses to mint a rule from text that is visibly cut, but the underlying chunk stays cut until the chunker learns the same abbreviations. Rules imported from the Voice bridge are recreated on the next maintenance pass, and the bridge only reinforces a rule when the bridge entry is newer than the rule's last update, so an unchanged file cannot inflate confidence pass after pass.
+
 ### Session-start context
 
 Rules and handoffs only helped when the agent remembered to ask for them, and measured over a day it did not: a rule written at importance 0.95 in the morning was never queried that afternoon, and the mistake it described was made again. So the store pushes instead of waiting to be pulled.

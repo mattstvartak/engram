@@ -43,6 +43,8 @@ export interface ProceduralRule {
     id: string;
     rule: string;
     domain: 'code' | 'communication' | 'workflow' | 'preference' | 'general';
+    /** Empty means everywhere; otherwise the project slug the rule belongs to. */
+    scope?: string;
     confidence: number;
     reinforcements: number;
     contradictions: number;

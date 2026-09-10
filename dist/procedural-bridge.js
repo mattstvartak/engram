@@ -1,26 +1,32 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-const BRIDGE_PATH = join(homedir(), '.claude', 'procedural-bridge.json');
+/**
+ * Read at call time, not module load, so a test can point it at a temp dir. Left at module
+ * load it read the real file under $HOME from inside the test suite.
+ */
+function bridgePath() {
+    return process.env.PRZM_MEMORY_BRIDGE_PATH ?? process.env.ENGRAM_BRIDGE_PATH ?? join(homedir(), '.claude', 'procedural-bridge.json');
+}
 // ── File I/O ───────────────────────────────────────────────────────
 export function loadBridgeFile() {
-    if (!existsSync(BRIDGE_PATH)) {
+    if (!existsSync(bridgePath())) {
         return { version: 1, lastUpdated: new Date().toISOString(), rules: [] };
     }
     try {
-        return JSON.parse(readFileSync(BRIDGE_PATH, 'utf-8'));
+        return JSON.parse(readFileSync(bridgePath(), 'utf-8'));
     }
     catch {
         return { version: 1, lastUpdated: new Date().toISOString(), rules: [] };
     }
 }
 export function saveBridgeFile(data) {
-    const dir = dirname(BRIDGE_PATH);
+    const dir = dirname(bridgePath());
     // 0700 owner-only (defensive). Bridge file mediates with przm Voice.
     if (!existsSync(dir))
         mkdirSync(dir, { recursive: true, mode: 0o700 });
     data.lastUpdated = new Date().toISOString();
-    writeFileSync(BRIDGE_PATH, JSON.stringify(data, null, 2), 'utf-8');
+    writeFileSync(bridgePath(), JSON.stringify(data, null, 2), 'utf-8');
 }
 // ── Export przm Memory Rules → Bridge ──────────────────────────────
 export async function exportRulesToBridge(storage) {
@@ -62,7 +68,11 @@ export async function importRulesFromBridge(storage) {
                 conflicts++;
                 continue;
             }
-            // Reinforce existing rule
+            // Reinforce only on new evidence. This ran on every maintenance pass and bumped the same
+            // unchanged Voice rule by 0.05 each time, which is unbounded inflation from a file nobody
+            // touched.
+            if (pr.updatedAt && match.updatedAt && pr.updatedAt <= match.updatedAt)
+                continue;
             match.reinforcements++;
             match.confidence = Math.min(1.0, match.confidence + 0.05);
             match.evidence.push(`[persona] ${pr.evidence[0] ?? pr.rule}`);
@@ -76,6 +86,7 @@ export async function importRulesFromBridge(storage) {
                 id: `persona-${pr.sourceId}`,
                 rule: pr.rule,
                 domain: mapPersonaDomain(pr.domain),
+                scope: '',
                 confidence: 0.4,
                 reinforcements: 0,
                 contradictions: 0,

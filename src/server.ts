@@ -23,7 +23,7 @@ import { getVersion } from './version.js';
 import { search, formatRecalledMemories } from './search.js';
 import { graphAwareRerank, graphAwareRerankPPR } from './graph-rerank.js';
 import { extractFromConversation } from './extractor.js';
-import { extractRules, formatRulesForPrompt } from './procedural.js';
+import { extractRules, formatRulesForPrompt, normalizeScope } from './procedural.js';
 import { recordRecallOutcome } from './outcome.js';
 import { mem0Extract } from './mem0.js';
 import { ingest } from './wal.js';
@@ -361,7 +361,7 @@ server.registerTool(
     const effectiveType = chunks[0]?.type ?? type;
     if (effectiveType === 'preference' || effectiveType === 'correction') {
       try {
-        await extractRules(config, storage, [{ role: 'user', content }]);
+        await extractRules(config, storage, [{ role: 'user', content }], undefined, { scope: normalizeScope(domain) });
       } catch { /* rule extraction is best-effort */ }
     }
 

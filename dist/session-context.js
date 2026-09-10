@@ -25,8 +25,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { readHandoff } from './handoff.js';
 const DEFAULTS = {
     maxChars: 10_000,
-    maxRules: 20,
-    minRuleConfidence: 0.5,
+    maxRules: 40,
+    // Seeded from source importance, and old memories have decayed; a real rule from a 0.15
+    // importance memory seeds at 0.36 and must still show.
+    minRuleConfidence: 0.35,
     maxCorrections: 10,
     minCorrectionImportance: 0.85,
     maxProjectMemories: 8,
@@ -116,8 +118,16 @@ function handoffSection(dataDir) {
         lines.push(`Notes: ${clip(latest.notes, 400)}`);
     return lines.join('\n');
 }
-async function rulesSection(storage, o) {
+function projectOf(cwd) {
+    if (!cwd)
+        return '';
+    const p = basename(cwd).toLowerCase();
+    return p === '/' || p === '.' ? '' : p;
+}
+async function rulesSection(storage, cwd, o) {
+    const project = projectOf(cwd);
     const rules = (await storage.getRules())
+        .filter(r => !r.scope || r.scope === project)
         .filter(r => r.confidence >= o.minRuleConfidence && r.contradictions <= r.reinforcements)
         .sort((a, b) => b.reinforcements - a.reinforcements || b.confidence - a.confidence)
         .slice(0, o.maxRules);
@@ -135,10 +145,8 @@ function correctionsSection(all, o) {
     return ['## Things the user has corrected or asked for', ...strong.map(c => `- ${clip(c.content, 320)}`)].join('\n');
 }
 function projectSection(all, cwd, o) {
-    if (!cwd)
-        return '';
-    const project = basename(cwd).toLowerCase();
-    if (!project || project === '/' || project === '.')
+    const project = projectOf(cwd);
+    if (!project)
         return '';
     const mine = dedupe(all
         .filter(c => (c.domain ?? '').toLowerCase() === project)
@@ -157,7 +165,7 @@ export async function buildSessionContext(storage, dataDir, opts = {}) {
     const all = await storage.listChunks();
     const sections = [
         handoffSection(dataDir),
-        await rulesSection(storage, o),
+        await rulesSection(storage, opts.cwd, o),
         correctionsSection(all, o),
         projectSection(all, opts.cwd, o),
     ].filter(Boolean);
