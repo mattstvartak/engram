@@ -5,6 +5,27 @@ All notable changes to `@onenomad/przm-memory` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-09-10
+
+Found by resuming a real session on 1.5.0.
+
+### Fixed
+
+- **Heredoc commits in mechanical handoffs.** The stop and pre-compact
+  hooks read the commit subject with a regex that only knew `-m "..."`.
+  A commit written as `-m "$(cat <<'EOF' ...` reported the literal
+  `$(cat <<` as the decision, five times over. Both hooks now take the
+  first line after the heredoc opener.
+- **Pre-compact no longer shadows a fresh handoff.** The hook reused an
+  existing handoff only when its reason was `compact`. A named handoff
+  written by hand seconds before compaction lost to the mechanical one
+  generated 200 ms later, and the session resumed on the worse of the
+  two. Any handoff inside the freshness window is reused now.
+- **Handoff writes strip leaked parameter markup.** One live handoff
+  carried `</currentTask>` and the whole `completed` array as text in
+  its task field while `completed` itself was empty. `writeHandoff`
+  sanitises every string before it lands, so every writer is covered.
+
 ## [1.5.0] - 2026-09-10
 
 ### Added

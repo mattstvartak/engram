@@ -2,8 +2,10 @@
 # Engram pre-compact hook — runs BEFORE context window compression.
 #
 # Behavior (autonomous):
-#  - APPROVE if a fresh handoff (reason="compact", written within
-#    ENGRAM_PRECOMPACT_WINDOW_SEC seconds — default 300) already exists.
+#  - APPROVE if a fresh handoff of any reason (written within
+#    ENGRAM_PRECOMPACT_WINDOW_SEC seconds — default 300) already exists. A
+#    handoff Claude wrote by hand moments ago beats a mechanical one, so the
+#    hook must not shadow it.
 #  - Otherwise, auto-generate a mechanical handoff from the transcript
 #    (last user messages, edited files, tool calls, commits) and APPROVE.
 #
@@ -35,8 +37,8 @@ RESULT=$(ENGRAM_DATA_DIR="$DATA_DIR" \
     const handoffDir = process.env.ENGRAM_HANDOFF_DIR;
     const windowMs = Number(process.env.WINDOW_SEC) * 1000;
 
-    // Phase 1 — if a fresh compact-reason handoff already exists (Claude
-    // wrote one proactively during the session), reuse it and approve.
+    // Phase 1 — if a fresh handoff already exists (Claude wrote one during
+    // the session, whatever reason it gave), reuse it and approve.
     try {
       if (fs.existsSync(handoffDir)) {
         const files = fs.readdirSync(handoffDir)
@@ -46,10 +48,10 @@ RESULT=$(ENGRAM_DATA_DIR="$DATA_DIR" \
         if (files.length) {
           const latest = JSON.parse(fs.readFileSync(path.join(handoffDir, files[0]), 'utf8'));
           const age = Date.now() - new Date(latest.timestamp).getTime();
-          if (latest.reason === 'compact' && isFinite(age) && age >= 0 && age <= windowMs) {
+          if (isFinite(age) && age >= 0 && age <= windowMs) {
             return console.log(JSON.stringify({
               decision: 'approve',
-              reason: 'Fresh compact-reason handoff detected — proceeding with compaction.',
+              reason: 'Fresh handoff (' + (latest.name || latest.reason) + ') already on disk — proceeding with compaction.',
             }));
           }
         }
@@ -113,7 +115,8 @@ RESULT=$(ENGRAM_DATA_DIR="$DATA_DIR" \
                   writeSet.add(input.file_path);
                 } else if (name === 'Bash' && typeof input.command === 'string') {
                   const cmd = input.command;
-                  const m = cmd.match(/git\s+commit[^\"]*-m\s+[\"']([^\"']+)[\"']/);
+                  let m = cmd.match(/git\s+commit[^\n]*<{2}\s*[\"']?EOF[\"']?\s*\n([^\n]+)/);
+                  if (!m) m = cmd.match(/git\s+commit[^\"']*-m\s+[\"']([^\"'$][^\"']*)[\"']/);
                   if (m) commits.push(m[1].split(/\\n|\n/)[0].slice(0, 120));
                 }
               }

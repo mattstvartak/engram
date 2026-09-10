@@ -69,7 +69,11 @@ node -e "
               fileSet.add(input.file_path);
               writeSet.add(input.file_path);
             } else if (name === 'Bash' && typeof input.command === 'string') {
-              const m = input.command.match(/git\s+commit[^\"]*-m\s+[\"']([^\"']+)[\"']/);
+              // Two shapes: a plain -m message, and a message piped in from a heredoc, where
+              // the subject is the first line after the EOF opener. The old regex reported the
+              // literal command-substitution text from the second shape as the commit.
+              let m = input.command.match(/git\s+commit[^\n]*<<\s*['\"]?EOF['\"]?\s*\n([^\n]+)/);
+              if (!m) m = input.command.match(/git\s+commit[^\"']*-m\s+[\"']([^\"'$][^\"']*)[\"']/);
               if (m) commits.push(m[1].split(/\\n|\n/)[0].slice(0, 120));
             }
           }

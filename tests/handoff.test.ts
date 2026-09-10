@@ -120,3 +120,20 @@ describe('handoff named checkpoints', () => {
     }
   });
 });
+
+describe('handoff sanitising', () => {
+  it('strips a leaked closing tag and the parameter that followed it', () => {
+    const { dir, cleanup } = tmpDir();
+    try {
+      const written = writeHandoff(dir, baseNote({
+        currentTask: 'Argos wave two running.</currentTask>\n<parameter name="completed">["a", "b"]',
+        completed: ['done thing</completed>\n<parameter name="nextSteps">[]'],
+      }));
+      assert.equal(written.currentTask, 'Argos wave two running.');
+      assert.deepEqual(written.completed, ['done thing']);
+      assert.equal(readHandoff(dir)?.currentTask, 'Argos wave two running.');
+    } finally {
+      cleanup();
+    }
+  });
+});
