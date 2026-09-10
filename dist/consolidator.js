@@ -224,11 +224,24 @@ async function linkRelated(storage, chunks) {
     return linked;
 }
 // ── Importance Decay ─────────────────────────────────────────────────
+/**
+ * A correction or preference the user stated explicitly does not become less true with age.
+ * Measured on a live store: 314 of them had decayed to the 0.15 floor and were losing retrieval
+ * to passing notes. Content and lifecycle of user-origin memories were already sacred; this
+ * keeps their importance from sinking below a rule-sized floor unless recall marks them
+ * irrelevant, which is a separate, evidence-driven path.
+ */
+export const INSTRUCTION_FLOOR = 0.5;
+export function instructionFloor(chunk) {
+    const explicit = (chunk.origin ?? 'user') === 'user' && (chunk.type === 'correction' || chunk.type === 'preference');
+    return explicit ? INSTRUCTION_FLOOR : 0;
+}
 async function decayImportance(storage, chunks) {
     let decayed = 0;
     const now = Date.now();
     const rates = { procedural: 0.98, semantic: 0.97, episodic: 0.95 };
     const floors = { procedural: 0.15, semantic: 0.10, episodic: 0.05 };
+    const floorFor = (chunk) => Math.max(floors[chunk.cognitiveLayer] ?? 0.10, instructionFloor(chunk));
     for (const chunk of chunks) {
         if (chunk.tier === 'archive')
             continue;
@@ -239,7 +252,7 @@ async function decayImportance(storage, chunks) {
         if (daysSinceTouch < 7)
             continue;
         const rate = rates[chunk.cognitiveLayer] ?? 0.97;
-        const floor = floors[chunk.cognitiveLayer] ?? 0.10;
+        const floor = floorFor(chunk);
         const weeks = daysSinceTouch / 7;
         const newImportance = Math.max(floor, chunk.importance * Math.pow(rate, weeks));
         if (Math.abs(newImportance - chunk.importance) > 0.01) {
@@ -401,6 +414,7 @@ async function decayFSRS(storage, chunks) {
     let decayed = 0;
     const now = Date.now();
     const floors = { procedural: 0.15, semantic: 0.10, episodic: 0.05 };
+    const floorFor = (chunk) => Math.max(floors[chunk.cognitiveLayer] ?? 0.10, instructionFloor(chunk));
     // Adaptive forgetting: compute active exemplars once
     const exemplars = getActiveExemplars(chunks);
     for (const chunk of chunks) {
@@ -428,7 +442,7 @@ async function decayFSRS(storage, chunks) {
             // Moderate proximity: normal decay
             effectiveStability = baseStability;
         }
-        const floor = floors[chunk.cognitiveLayer] ?? 0.10;
+        const floor = floorFor(chunk);
         const retrievability = fsrsRetrievability(daysSinceTouch, effectiveStability);
         const newImportance = Math.max(floor, chunk.importance * retrievability);
         if (Math.abs(newImportance - chunk.importance) > 0.01) {

@@ -59,3 +59,31 @@ after. Full test suite. Commit. Publishing is a separate step.
 Retrieval recall at 5 on the golden set reported honestly, with misses explained. Zero hook
 failures on bad input. Outcome history backfilled if the dry run is sane, with the ratio
 stated. Every number in the report comes from a run.
+
+## Results, 2026-09-10
+
+Measured, before and after, on the same 24 paraphrased questions, on fresh copies of the live
+store, with a hit counted on the target, its parent or a sibling piece:
+
+| | before | after |
+|---|---|---|
+| recall at 1 | 0.42 | 0.50 |
+| recall at 5 | 0.79 | 0.83 |
+| recall at 10 | 0.88 | 0.92 |
+| mean reciprocal rank | 0.58 | 0.64 |
+
+One genuine miss remains; the other is a mislabelled test item. Parents alone scored 0.33 at
+recall 5, so children carry retrieval and the split threshold stays at 500.
+
+Store: 4,500 chunks, 1,091 parents and 3,103 children. Zero user-stated instructions below the
+floor, zero derived summaries ending mid-sentence, 706 chunks carrying recall outcomes from 158
+graded searches across 210 transcripts, 126 rules extracted from whole memories. Six pieces
+remain flagged: authored parentheticals spanning a paragraph break, which no splitter repairs.
+The repair converges; a dry run reports zero.
+
+Hooks: 28 bad-input cases, zero failures, none slower than 0.6 s on a real transcript.
+
+What went wrong on the way, kept because it is the useful part: the first live repair
+concatenated parents with their own children before the parent-child design was understood, and
+was rebuilt from an untouched copy; three chained commands ran a mutation after a failing test
+because the exit status was hidden behind a pipe, fixed by gating on the test's real exit.

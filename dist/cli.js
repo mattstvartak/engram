@@ -15,12 +15,16 @@
  * stdio JSON-RPC.
  */
 import { parseArgs } from 'node:util';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { loadConfig } from './config.js';
 import { Storage } from './storage.js';
 import { search, formatRecalledMemories } from './search.js';
 import { gradeTranscript } from './inferred-outcome.js';
 import { buildSessionContext } from './session-context.js';
 import { rebuildRules } from './maintenance.js';
+import { repairStore } from './repair.js';
 const HELP = `przm-memory-mcp — memory CLI
 
 Usage:
@@ -33,12 +37,18 @@ Usage:
                                                                reclaim disk
   przm-memory-mcp grade   --transcript <path> --session <id>   infer recall outcomes from a
                           [--final] [--min-turns N] [--dry-run]  Claude Code transcript
+  przm-memory-mcp grade   --all [--dry-run]                     the same over every transcript
+                                                               under ~/.claude/projects
   przm-memory-mcp context [--cwd <dir>] [--max-chars N]        print session-start context:
                                                                handoff, rules, corrections,
                                                                project memories
   przm-memory-mcp rules   list [--scope <slug>] | rebuild      show the rules table, or throw it
                                                                away and re-derive it from the
                                                                correction and preference chunks
+  przm-memory-mcp repair  [--dry-run]                          re-ingest memories whose pieces
+                                                               were cut, trim truncated
+                                                               summaries, lift user-stated
+                                                               corrections to the rule floor
   przm-memory-mcp login   <server-url> | --server <url>        pair with przm Cloud
   przm-memory-mcp logout                                       remove cached credentials
   przm-memory-mcp help                                         this message
@@ -354,7 +364,31 @@ const GRADE_OPTS = {
     final: { type: 'boolean' },
     'min-turns': { type: 'string' },
     'dry-run': { type: 'boolean' },
+    all: { type: 'boolean' },
 };
+/** Every Claude Code transcript on this machine, as (path, session id) pairs. */
+function allTranscripts() {
+    const root = join(homedir(), '.claude', 'projects');
+    if (!existsSync(root))
+        return [];
+    const out = [];
+    for (const project of readdirSync(root)) {
+        const dir = join(root, project);
+        let files = [];
+        try {
+            files = readdirSync(dir);
+        }
+        catch {
+            continue;
+        }
+        for (const f of files) {
+            if (!f.endsWith('.jsonl'))
+                continue;
+            out.push({ path: join(dir, f), session: f.slice(0, -'.jsonl'.length) });
+        }
+    }
+    return out;
+}
 /**
  * Grade memory-search results from a transcript and record helpful / irrelevant outcomes.
  * Called by the stop and session-end hooks, so it has to be quiet and cheap: storage is only
@@ -362,17 +396,44 @@ const GRADE_OPTS = {
  */
 async function runGrade(argv) {
     const { values } = parseArgs({ args: argv, options: GRADE_OPTS, allowPositionals: false });
-    if (!values.transcript)
-        fail('grade: --transcript is required');
-    if (!values.session)
-        fail('grade: --session is required');
     const minTurns = parseIntOpt(values['min-turns'], 'min-turns');
     const config = loadConfig();
-    const summary = await gradeTranscript(config, async () => {
-        const storage = new Storage(config.dataDir);
-        await storage.ensureReady();
+    let storage = null;
+    const open = async () => {
+        if (!storage) {
+            storage = new Storage(config.dataDir);
+            await storage.ensureReady();
+        }
         return storage;
-    }, String(values.transcript), String(values.session), { final: !!values.final, minTurnsAfter: minTurns ?? undefined, dryRun: !!values['dry-run'] });
+    };
+    const dryRun = !!values['dry-run'];
+    // Backfill from history. Every transcript is graded final, since nothing more is coming for
+    // any of them, and each search is still graded only once thanks to the per-session state.
+    if (values.all) {
+        const totals = { transcripts: 0, withSearches: 0, graded: 0, helpful: 0, irrelevant: 0, alreadyGraded: 0 };
+        for (const t of allTranscripts()) {
+            totals.transcripts++;
+            try {
+                const s = await gradeTranscript(config, open, t.path, t.session, { final: true, dryRun });
+                if (s.graded || s.alreadyGraded)
+                    totals.withSearches++;
+                totals.graded += s.graded;
+                totals.helpful += s.helpful;
+                totals.irrelevant += s.irrelevant;
+                totals.alreadyGraded += s.alreadyGraded;
+            }
+            catch (err) {
+                process.stderr.write(`grade: ${t.path}: ${err.message}\n`);
+            }
+        }
+        process.stdout.write(JSON.stringify({ ...totals, dryRun }) + '\n');
+        return;
+    }
+    if (!values.transcript)
+        fail('grade: --transcript is required (or --all)');
+    if (!values.session)
+        fail('grade: --session is required');
+    const summary = await gradeTranscript(config, open, String(values.transcript), String(values.session), { final: !!values.final, minTurnsAfter: minTurns ?? undefined, dryRun });
     process.stdout.write(JSON.stringify(summary) + '\n');
 }
 const CONTEXT_OPTS = {
@@ -427,6 +488,17 @@ async function runRules(argv) {
     }
     fail(`rules: unknown action "${action}" (list | rebuild)`);
 }
+const REPAIR_OPTS = {
+    'dry-run': { type: 'boolean' },
+};
+async function runRepair(argv) {
+    const { values } = parseArgs({ args: argv, options: REPAIR_OPTS, allowPositionals: false });
+    const config = loadConfig();
+    const storage = new Storage(config.dataDir);
+    await storage.ensureReady();
+    const report = await repairStore(config, storage, { dryRun: !!values['dry-run'] });
+    process.stdout.write(JSON.stringify(report) + '\n');
+}
 async function main() {
     const [, , sub, ...rest] = process.argv;
     if (!sub || sub.startsWith('-')) {
@@ -460,6 +532,9 @@ async function main() {
             return;
         case 'rules':
             await runRules(rest);
+            return;
+        case 'repair':
+            await runRepair(rest);
             return;
         case 'login':
             await runLoginCmd(rest);

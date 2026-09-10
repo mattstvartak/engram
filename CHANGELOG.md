@@ -12,11 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`grade --all`.** Grades every Claude Code transcript on the machine
   and records recall outcomes, so a store that predates inferred
   outcomes gets its history back. Each search is still graded once.
-- **`repair`.** Rejoins memories the chunker stored cut mid-sentence,
-  through the ingest path so the merged memory is embedded fresh, and
-  lifts user-stated corrections and preferences to the instruction
-  floor. `--dry-run` reports; `--rejoin-all` rejoins every split memory
-  for measuring whether splitting hurts recall.
+- **`repair`.** Re-ingests memories whose child pieces the chunker had
+  cut mid-sentence, so they are embedded fresh and re-pieced with the
+  fixed splitter; trims derived summaries the old heuristic cut
+  mid-word to their last whole sentence; lifts user-stated corrections
+  and preferences to the instruction floor. `--dry-run` reports.
+- **Consolidation summaries end on a sentence.** The heuristic
+  summariser took the first 100 characters of a memory and cut wherever
+  that fell, and the LLM path capped at 150 tokens with no trim; 46
+  derived summaries on a live store ended mid-word. Both now trim to
+  whole sentences.
+- **Rules extract from whole memories.** The backfill read child pieces
+  and skipped parents, so rules were extracted from text that could
+  start mid-thought and carried no label. It now reads parents and
+  standalone memories only.
 - **Instruction floor.** Corrections and preferences with `origin:
   user` no longer decay below 0.5 in either decay path. A rule the user
   set does not become less true with age; 314 of them had reached the
@@ -30,11 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is how memories came to be stored ending in "(e.g." for
   months. Both now use `splitSentences`, which masks backtick spans
   and "e.g.", "i.e.", "etc." and "vs." before splitting.
-- **Chunker threshold 500 -> 1200.** Measured on a live store, 94% of
-  chunks were pieces of a longer memory, and two of three retrieval
-  misses on a golden set were pieces whose siblings held the rest of
-  the answer. A memory under 1,200 characters is about 300 tokens and
-  stays whole.
+- **Chunker threshold stays at 500, on evidence.** Raising it to 1200
+  was tried: a long memory is stored whole as a parent plus child
+  pieces, and the pieces are what retrieval finds. On a golden set of
+  24 paraphrased questions, recall at 5 was 0.79 with pieces and 0.33
+  with parents alone. After this release's repairs, the instruction
+  floor and the outcome backfill, the same questions score recall at 1
+  0.50, at 5 0.83, at 10 0.92, mean reciprocal rank 0.64, up from 0.42,
+  0.79, 0.88 and 0.58.
 - **`grade` output** documents that `graded` counts searches while
   `helpful` and `irrelevant` count chunks.
 

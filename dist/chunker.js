@@ -5,6 +5,11 @@
  * a distinct embedding instead of averaging over many topics.
  * Short content (< splitThreshold) passes through unchanged.
  */
+import { splitSentences } from './sentences.js';
+// A long memory is stored whole as a parent and again as child pieces, and the pieces are what
+// retrieval finds: on a golden set of 24 paraphrased questions against a live store, recall at 5
+// was 0.79 with pieces and 0.33 with parents alone. Raising this threshold to 1200 was tried and
+// reverted for that reason. Keep the pieces.
 const DEFAULTS = {
     minChunkLength: 200,
     maxChunkLength: 600,
@@ -99,7 +104,7 @@ function splitOnSpeakerTurns(text, maxLength) {
  * Split text at sentence boundaries, keeping chunks under maxLength.
  */
 function splitAtSentences(text, maxLength) {
-    const sentences = text.split(/(?<=[.!?])\s+/);
+    const sentences = splitSentences(text);
     const chunks = [];
     let current = '';
     for (const sentence of sentences) {

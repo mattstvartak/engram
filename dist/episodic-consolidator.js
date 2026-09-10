@@ -1,3 +1,4 @@
+import { splitSentences } from './sentences.js';
 import { randomUUID } from 'node:crypto';
 import { embed, llmComplete, isLlmAvailable, getEmbeddingModelProfile } from './llm.js';
 import { cosineSimilarity, buildContextPrefix } from './utils.js';
@@ -159,7 +160,9 @@ async function summarizeCluster(config, cluster) {
     const contents = cluster.map(c => c.content).join('\n- ');
     if (isLlmAvailable()) {
         try {
-            return await llmComplete(config, 'You consolidate related memories into a single concise summary. Extract the shared principle, pattern, or key fact. Output 1-2 sentences maximum. Do not add commentary.', `Related memories:\n- ${contents}`, { maxTokens: 150, temperature: 0 });
+            const text = await llmComplete(config, 'You consolidate related memories into a single concise summary. Extract the shared principle, pattern, or key fact. Output 1-2 sentences maximum. Do not add commentary.', `Related memories:\n- ${contents}`, { maxTokens: 150, temperature: 0 });
+            // 150 tokens can land mid-sentence; a summary that stops mid-word is worse than a shorter one.
+            return trimToSentence(text, 600) || text.trim();
         }
         catch { /* fall through to heuristic */ }
     }
@@ -167,7 +170,26 @@ async function summarizeCluster(config, cluster) {
     const sharedTags = extractSharedTags(cluster);
     const dateRange = getDateRange(cluster);
     const domain = cluster[0].domain || 'general';
-    return `Over ${dateRange}, ${cluster.length} interactions about ${domain}${sharedTags.length > 0 ? ` involving ${sharedTags.join(', ')}` : ''}. ${cluster[0].content.slice(0, 100)}`;
+    // This used to take the first 100 characters of the first memory and cut wherever that fell.
+    // Measured on a live store: 46 derived summaries ended mid-word, "Careers and Oil Ch".
+    const lead = trimToSentence(cluster[0].content, 200) || cluster[0].content.slice(0, 200).replace(/\s+\S*$/, '');
+    return `Over ${dateRange}, ${cluster.length} interactions about ${domain}${sharedTags.length > 0 ? ` involving ${sharedTags.join(', ')}` : ''}. ${lead}`;
+}
+/**
+ * The longest run of whole sentences that fits in `max` characters, or '' when even the first
+ * sentence does not fit.
+ */
+export function trimToSentence(text, max) {
+    // Only a sentence that actually ends counts; a trailing fragment is what this exists to drop.
+    const sentences = splitSentences(text.trim()).filter(s => /[.!?]["')\]]*$/.test(s));
+    let out = '';
+    for (const s of sentences) {
+        const next = out ? `${out} ${s}` : s;
+        if (next.length > max)
+            break;
+        out = next;
+    }
+    return out;
 }
 function extractSharedTags(cluster) {
     const tagCounts = new Map();

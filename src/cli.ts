@@ -50,9 +50,9 @@ Usage:
   przm-memory-mcp rules   list [--scope <slug>] | rebuild      show the rules table, or throw it
                                                                away and re-derive it from the
                                                                correction and preference chunks
-  przm-memory-mcp repair  [--dry-run] [--rejoin-all]           rejoin memories the chunker cut
-                                                               mid-sentence (or every split
-                                                               memory), lift user-stated
+  przm-memory-mcp repair  [--dry-run]                          re-ingest memories whose pieces
+                                                               were cut, trim truncated
+                                                               summaries, lift user-stated
                                                                corrections to the rule floor
   przm-memory-mcp login   <server-url> | --server <url>        pair with przm Cloud
   przm-memory-mcp logout                                       remove cached credentials
@@ -523,7 +523,6 @@ async function runRules(argv: string[]): Promise<void> {
 
 const REPAIR_OPTS = {
   'dry-run': { type: 'boolean' },
-  'rejoin-all': { type: 'boolean' },
 } as const satisfies ParseArgsConfig['options'];
 
 async function runRepair(argv: string[]): Promise<void> {
@@ -531,7 +530,7 @@ async function runRepair(argv: string[]): Promise<void> {
   const config = loadConfig();
   const storage = new Storage(config.dataDir);
   await storage.ensureReady();
-  const report = await repairStore(config, storage, { dryRun: !!values['dry-run'], rejoinAll: !!values['rejoin-all'] });
+  const report = await repairStore(config, storage, { dryRun: !!values['dry-run'] });
   process.stdout.write(JSON.stringify(report) + '\n');
 }
 

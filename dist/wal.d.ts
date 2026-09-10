@@ -92,4 +92,10 @@ export declare function pendingSideEffectCount(): number;
  * Immediately persist one or more memory entries.
  * Designed to be called mid-conversation, before the agent responds.
  */
+/**
+ * Some MCP clients bleed the tool call's closing tag and the next parameter's opening into a
+ * multi-line content value. Measured on a live store: 113 chunks carried it. Strip it before
+ * anything is stored rather than at every reader.
+ */
+export declare function stripLeakedMarkup(content: string): string;
 export declare function ingest(config: SmartMemoryConfig, storage: Storage, entries: IngestEntry[]): Promise<StoredChunk[]>;

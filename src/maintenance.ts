@@ -94,8 +94,11 @@ export function maintenanceOverdue(dataDir: string): boolean {
  */
 async function backfillRules(config: SmartMemoryConfig, storage: Storage): Promise<number> {
   const chunks = await storage.listChunks();
+  // A long memory is stored as a whole parent plus child pieces. Extract from the whole: a
+  // child can start mid-thought, carries no label, and extracting from both would count every
+  // rule twice.
   const sources = chunks
-    .filter(c => (c.type === 'preference' || c.type === 'correction') && c.consolidationLevel !== -1)
+    .filter(c => (c.type === 'preference' || c.type === 'correction') && !c.parentChunkId)
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     .slice(0, 500);
   if (sources.length === 0) return 0;

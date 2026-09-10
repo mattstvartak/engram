@@ -16,20 +16,20 @@ export interface ChunkSplitResult {
 export interface ChunkerOptions {
   /** Minimum sub-chunk length in characters (default: 200) */
   minChunkLength?: number;
-  /** Maximum sub-chunk length in characters (default: 1200) */
+  /** Maximum sub-chunk length in characters (default: 600) */
   maxChunkLength?: number;
-  /** Content length threshold to trigger splitting (default: 1200) */
+  /** Content length threshold to trigger splitting (default: 500) */
   splitThreshold?: number;
 }
 
-// Measured on a live store: with a 500 character threshold, 94% of chunks were pieces of a
-// longer memory, and two of three retrieval misses on a golden set were pieces whose siblings
-// held the rest of the answer. A memory under 1,200 characters is about 300 tokens, well inside
-// what the embedding model reads whole, so it stays whole.
+// A long memory is stored whole as a parent and again as child pieces, and the pieces are what
+// retrieval finds: on a golden set of 24 paraphrased questions against a live store, recall at 5
+// was 0.79 with pieces and 0.33 with parents alone. Raising this threshold to 1200 was tried and
+// reverted for that reason. Keep the pieces.
 const DEFAULTS: Required<ChunkerOptions> = {
   minChunkLength: 200,
-  maxChunkLength: 1200,
-  splitThreshold: 1200,
+  maxChunkLength: 600,
+  splitThreshold: 500,
 };
 
 /**

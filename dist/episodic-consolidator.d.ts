@@ -27,3 +27,8 @@ export interface EpisodicConsolidationStats {
  * generates summaries, and stores them as L1 semantic chunks.
  */
 export declare function consolidateEpisodic(config: SmartMemoryConfig, storage: Storage): Promise<EpisodicConsolidationStats>;
+/**
+ * The longest run of whole sentences that fits in `max` characters, or '' when even the first
+ * sentence does not fit.
+ */
+export declare function trimToSentence(text: string, max: number): string;

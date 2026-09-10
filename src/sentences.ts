@@ -21,8 +21,12 @@ export interface SplitOptions {
 }
 
 export function splitSentences(text: string, opts: SplitOptions = {}): string[] {
+  // Brackets too: a parenthetical that spans a sentence end ("(see Kit.make_dot(). It is
+  // separate.)") must not be split at the period inside it, or the piece closes with the bracket
+  // still open. Innermost, unnested spans only; a bracket left open by the author stays open.
   const masked = text
     .replace(/`[^`]*`/g, mask)
+    .replace(/\((?:[^()\n]|\([^()\n]*\)){0,400}\)/g, mask)
     .replace(/\b(?:e\.g|i\.e|etc|vs)\./gi, mask);
   const boundary = opts.semicolons ? '[.!?;]' : '[.!?]';
   const pattern = new RegExp(`(?<=${boundary})\\s+${opts.newlines ? '|(?<=\\n)' : ''}`);

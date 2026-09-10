@@ -19,6 +19,12 @@ describe('splitSentences', () => {
       ['Keep required file headers (e.g. the copyright block).', 'Run it with the `! sudo pacman -S pkg` prefix.', 'Done.'],
     );
   });
+  it('does not break inside a bracket that spans a sentence end', () => {
+    assert.deepEqual(
+      splitSentences('Use the own dot (see Kit.make_dot(). It is separate from fx.dot). Then continue.'),
+      ['Use the own dot (see Kit.make_dot(). It is separate from fx.dot).', 'Then continue.'],
+    );
+  });
   it('treats semicolons as boundaries only when asked', () => {
     const text = 'Do not leave agents idle; stop them when done.';
     assert.equal(splitSentences(text).length, 1);
